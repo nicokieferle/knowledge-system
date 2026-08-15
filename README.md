@@ -1,0 +1,97 @@
+# Knowledge System
+
+Local-first prototype for a long-term personal knowledge base.
+
+## Core rule
+
+**Original data is the source of truth. The vector database is a disposable index.**
+
+For V0:
+
+- canonical knowledge lives as Markdown under `knowledge/`
+- Git versions every change
+- PostgreSQL + pgvector stores derived chunks and embeddings
+- embeddings are generated locally
+- only changed chunks are re-embedded
+- search uses exact cosine similarity
+- no AI is allowed to write directly to `main`
+
+Later versions can add hybrid retrieval, MCP, proposals, approval/rejection and other source adapters.
+
+## Architecture
+
+```text
+knowledge/*.md (Git)
+        |
+        v
+Markdown chunker
+        |
+        v
+local embedding model
+        |
+        v
+PostgreSQL + pgvector
+        |
+        v
+semantic search
+```
+
+## Quick start
+
+1. Copy the environment file:
+
+```bash
+cp .env.example .env
+```
+
+2. Start PostgreSQL:
+
+```bash
+docker compose up -d
+```
+
+3. Create a virtual environment and install:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+```
+
+4. Initialize the database:
+
+```bash
+knowledge init-db
+```
+
+5. Index the sample knowledge:
+
+```bash
+knowledge index
+```
+
+6. Search:
+
+```bash
+knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?"
+```
+
+## What V0 intentionally does not do
+
+- no MCP
+- no ChatGPT integration
+- no automatic knowledge writes
+- no pull-request workflow
+- no reranker
+- no HNSW index
+- no journal adapter
+
+These come only after retrieval quality is measurable.
