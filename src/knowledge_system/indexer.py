@@ -9,13 +9,16 @@ from .config import Settings
 from .db import connect
 
 ExistingChunkState = tuple[str, str]
+ROOT_MARKDOWN_EXCLUDES = {"README.md"}
 
 
 def discover_markdown(root: Path) -> list[Path]:
     return sorted(
         path
         for path in root.rglob("*.md")
-        if path.is_file() and not any(part.startswith(".") for part in path.relative_to(root).parts)
+        if path.is_file()
+        and path.relative_to(root).as_posix() not in ROOT_MARKDOWN_EXCLUDES
+        and not any(part.startswith(".") for part in path.relative_to(root).parts)
     )
 
 
