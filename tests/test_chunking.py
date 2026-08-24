@@ -31,3 +31,20 @@ def test_chunk_keys_are_deterministic(tmp_path: Path) -> None:
 
     assert first[0].chunk_key == second[0].chunk_key
     assert first[0].content_hash == second[0].content_hash
+
+
+def test_chunk_markdown_ignores_yaml_frontmatter(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    root.mkdir()
+    path = root / "test.md"
+    path.write_text(
+        "---\nid: T-1\ntags:\n  - geldpolitik\n---\n\n# These\n\nInhalt.",
+        encoding="utf-8",
+    )
+
+    chunks = chunk_markdown(path, root)
+
+    assert len(chunks) == 1
+    assert chunks[0].heading_path == "These"
+    assert "id: T-1" not in chunks[0].content
+    assert "geldpolitik" not in chunks[0].content

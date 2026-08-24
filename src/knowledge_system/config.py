@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
@@ -29,13 +30,27 @@ class Settings:
     embedding_dimensions: int
 
 
+def _with_default_connect_timeout(database_url: str, seconds: int = 5) -> str:
+    if "connect_timeout" in database_url or not database_url.startswith(
+        ("postgresql://", "postgres://")
+    ):
+        return database_url
+
+    parts = urlsplit(database_url)
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("connect_timeout", str(seconds)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def get_settings() -> Settings:
     _load_dotenv()
 
     return Settings(
-        database_url=os.getenv(
-            "DATABASE_URL",
-            "postgresql://knowledge:knowledge@localhost:5432/knowledge",
+        database_url=_with_default_connect_timeout(
+            os.getenv(
+                "DATABASE_URL",
+                "postgresql://knowledge:knowledge@localhost:5432/knowledge",
+            )
         ),
         knowledge_root=Path(os.getenv("KNOWLEDGE_ROOT", "./knowledge")).resolve(),
         embedding_model=os.getenv(

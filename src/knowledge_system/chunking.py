@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import hashlib
 import re
-
+from dataclasses import dataclass
+from pathlib import Path
 
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+FRONTMATTER_RE = re.compile(r"\A---\s*\n.*?\n---\s*(?:\n|\Z)", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -62,9 +62,13 @@ def _split_long_section(text: str, max_chars: int = 2800, overlap_chars: int = 2
     return [chunk for chunk in chunks if chunk]
 
 
+def _strip_frontmatter(text: str) -> str:
+    return FRONTMATTER_RE.sub("", text, count=1)
+
+
 def chunk_markdown(path: Path, root: Path) -> list[Chunk]:
     """Split Markdown primarily by semantic headings, then by paragraph size."""
-    text = path.read_text(encoding="utf-8")
+    text = _strip_frontmatter(path.read_text(encoding="utf-8"))
     relative_path = path.relative_to(root).as_posix()
 
     heading_stack: list[tuple[int, str]] = []

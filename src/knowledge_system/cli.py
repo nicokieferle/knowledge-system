@@ -4,9 +4,6 @@ import argparse
 import sys
 
 from .config import get_settings
-from .db import init_db
-from .indexer import index_knowledge
-from .search import semantic_search
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -28,17 +25,24 @@ def main() -> None:
     settings = get_settings()
 
     print(f"[config] knowledge_root={settings.knowledge_root}")
-    print(f"[config] embedding_model={settings.embedding_model}")
 
     if args.command == "init-db":
+        from .db import init_db
+
         init_db(settings)
         return
 
     if args.command == "index":
+        print(f"[config] embedding_model={settings.embedding_model}")
+        from .indexer import index_knowledge
+
         index_knowledge(settings)
         return
 
     if args.command == "search":
+        print(f"[config] embedding_model={settings.embedding_model}")
+        from .search import semantic_search
+
         results = semantic_search(settings, args.query, args.limit)
         if not results:
             print("No results.")

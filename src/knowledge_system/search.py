@@ -6,7 +6,6 @@ from pgvector import Vector
 
 from .config import Settings
 from .db import connect
-from .embedder import LocalEmbedder
 
 
 @dataclass(frozen=True)
@@ -18,6 +17,8 @@ class SearchResult:
 
 
 def semantic_search(settings: Settings, query: str, limit: int = 5) -> list[SearchResult]:
+    from .embedder import LocalEmbedder
+
     embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
     query_vector = Vector(embedder.encode([query])[0])
 
