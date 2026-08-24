@@ -84,6 +84,24 @@ knowledge index
 knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?"
 ```
 
+7. Run the retrieval baseline evaluation:
+
+```bash
+knowledge eval --suite eval/retrieval_v01.jsonl
+```
+
+Machine-readable output:
+
+```bash
+knowledge eval --suite eval/retrieval_v01.jsonl --json
+```
+
+The eval suite is JSON Lines. Each case contains an `id`, a natural-language `query`,
+`expected_sources`, optional `expected_headings`, and an optional `description`.
+V0.1 starts with only a tiny seed suite because the repository currently contains one
+real knowledge thesis. Expand the knowledge base and eval cases before treating the
+metrics as representative.
+
 ## What V0 intentionally does not do
 
 - no MCP

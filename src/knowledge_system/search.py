@@ -16,15 +16,17 @@ class SearchResult:
     similarity: float
 
 
-def semantic_search(settings: Settings, query: str, limit: int = 5) -> list[SearchResult]:
+def semantic_search(settings: Settings, query: str, limit: int = 5, verbose: bool = True) -> list[SearchResult]:
     from .embedder import LocalEmbedder
 
-    embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
+    embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions, verbose=verbose)
     query_vector = Vector(embedder.encode([query])[0])
-    print("[search] Query embedding ready")
+    if verbose:
+        print("[search] Query embedding ready")
 
     with connect(settings) as conn:
-        print(f"[search] Querying vector index: limit={limit}")
+        if verbose:
+            print(f"[search] Querying vector index: limit={limit}")
         rows = conn.execute(
             """
             SELECT
@@ -40,7 +42,8 @@ def semantic_search(settings: Settings, query: str, limit: int = 5) -> list[Sear
             (query_vector, settings.embedding_model, query_vector, limit),
         ).fetchall()
 
-    print(f"[search] Retrieved {len(rows)} result(s)")
+    if verbose:
+        print(f"[search] Retrieved {len(rows)} result(s)")
     return [
         SearchResult(
             source_path=row[0],
