@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from knowledge_system.evaluation import EvalCase, EvalReport, evaluate_cases, format_human_report
+from knowledge_system.config import Settings
+from knowledge_system.evaluation import (
+    EvalCase,
+    EvalReport,
+    build_reusable_embedder_search,
+    evaluate_cases,
+    format_human_report,
+)
 from knowledge_system.search import SearchResult
 
 
@@ -81,3 +88,47 @@ def test_format_human_report_shows_failure_details() -> None:
     assert "Expected heading" in output
     assert "actual.md" in output
     assert "similarity=0.4200" in output
+
+
+def test_reusable_eval_search_builds_one_embedder_for_multiple_queries() -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    created_embedders: list[object] = []
+    used_embedders: list[object] = []
+
+    def embedder_factory(model_name: str, dimensions: int, verbose: bool) -> object:
+        embedder = object()
+        created_embedders.append(embedder)
+        assert model_name == "model"
+        assert dimensions == 384
+        assert verbose is False
+        return embedder
+
+    def search_with_embedder(
+        passed_settings: Settings,
+        query: str,
+        embedder: object,
+        limit: int,
+        verbose: bool,
+    ) -> list[SearchResult]:
+        assert passed_settings is settings
+        assert limit == 5
+        assert verbose is False
+        used_embedders.append(embedder)
+        return [_result(f"{query}.md", "Heading", 0.9)]
+
+    search = build_reusable_embedder_search(
+        settings,
+        verbose=False,
+        search_with_embedder=search_with_embedder,
+        embedder_factory=embedder_factory,
+    )
+
+    assert search("first", 5)[0].source_path == "first.md"
+    assert search("second", 5)[0].source_path == "second.md"
+    assert len(created_embedders) == 1
+    assert used_embedders == [created_embedders[0], created_embedders[0]]

@@ -98,9 +98,8 @@ knowledge eval --suite eval/retrieval_v01.jsonl --json
 
 The eval suite is JSON Lines. Each case contains an `id`, a natural-language `query`,
 `expected_sources`, optional `expected_headings`, and an optional `description`.
-V0.1 starts with only a tiny seed suite because the repository currently contains one
-real knowledge thesis. Expand the knowledge base and eval cases before treating the
-metrics as representative.
+V0.1 includes a small economics-focused test corpus and retrieval suite. The metrics are
+useful as a local baseline, not as a broad benchmark for general knowledge retrieval.
 
 ## What V0 intentionally does not do
 

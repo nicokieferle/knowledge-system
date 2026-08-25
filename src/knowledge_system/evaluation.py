@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings
-from .search import SearchResult, semantic_search
+from .search import SearchResult, semantic_search_with_embedder
 
 
 @dataclass(frozen=True)
@@ -88,6 +88,8 @@ class EvalReport:
 
 
 SearchFn = Callable[[str, int], list[SearchResult]]
+SearchWithEmbedderFn = Callable[[Settings, str, object, int, bool], list[SearchResult]]
+EmbedderFactory = Callable[[str, int, bool], object]
 
 
 def _string_list(value: object, field_name: str, line_number: int) -> tuple[str, ...]:
@@ -191,15 +193,32 @@ def run_retrieval_eval(
     verbose: bool = True,
 ) -> EvalReport:
     cases = load_eval_suite(suite_path)
-
-    def search(query: str, search_limit: int) -> list[SearchResult]:
-        return semantic_search(settings, query, search_limit, verbose=verbose)
+    search = build_reusable_embedder_search(settings, verbose=verbose)
 
     return EvalReport(
         suite_path=suite_path,
         limit=limit,
         case_results=evaluate_cases(cases, search, limit=limit),
     )
+
+
+def build_reusable_embedder_search(
+    settings: Settings,
+    verbose: bool = True,
+    search_with_embedder: SearchWithEmbedderFn = semantic_search_with_embedder,
+    embedder_factory: EmbedderFactory | None = None,
+) -> SearchFn:
+    if embedder_factory is None:
+        from .embedder import LocalEmbedder
+
+        embedder_factory = LocalEmbedder
+
+    embedder = embedder_factory(settings.embedding_model, settings.embedding_dimensions, verbose)
+
+    def search(query: str, search_limit: int) -> list[SearchResult]:
+        return search_with_embedder(settings, query, embedder, search_limit, verbose)
+
+    return search
 
 
 def format_human_report(report: EvalReport) -> str:

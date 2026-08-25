@@ -16,7 +16,7 @@
 - [x] define a small extensible retrieval eval format
 - [x] add a seed eval suite for the current knowledge base
 - [x] add Hit@1 / Hit@3 / Hit@5 / MRR baseline runner
-- [ ] expand the retrieval test set to 20–50 questions once enough real knowledge exists
+- [x] expand the retrieval test set to 20–50 questions once enough real knowledge exists
 - [ ] add PostgreSQL full-text keyword search
 - [ ] combine keyword + vector results with Reciprocal Rank Fusion
 - [ ] add metadata/frontmatter parsing
