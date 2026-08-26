@@ -90,6 +90,13 @@ knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?"
 knowledge eval --suite eval/retrieval_v01.jsonl
 ```
 
+The default eval retriever is the semantic vector baseline. A separate PostgreSQL full-text
+keyword baseline can be measured without changing the eval suite:
+
+```bash
+knowledge eval --suite eval/retrieval_v01.jsonl --retriever keyword --text-config german
+```
+
 Machine-readable output:
 
 ```bash
@@ -100,6 +107,8 @@ The eval suite is JSON Lines. Each case contains an `id`, a natural-language `qu
 `expected_sources`, optional `expected_headings`, and an optional `description`.
 V0.1 includes a small economics-focused test corpus and retrieval suite. The metrics are
 useful as a local baseline, not as a broad benchmark for general knowledge retrieval.
+Keyword eval currently supports PostgreSQL `german` and `simple` text search configurations;
+`german` is the default because it performs better on the current German-language suite.
 
 ## What V0 intentionally does not do
 

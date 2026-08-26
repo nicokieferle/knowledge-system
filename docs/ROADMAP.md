@@ -17,7 +17,7 @@
 - [x] add a seed eval suite for the current knowledge base
 - [x] add Hit@1 / Hit@3 / Hit@5 / MRR baseline runner
 - [x] expand the retrieval test set to 20–50 questions once enough real knowledge exists
-- [ ] add PostgreSQL full-text keyword search
+- [x] add PostgreSQL full-text keyword search
 - [ ] combine keyword + vector results with Reciprocal Rank Fusion
 - [ ] add metadata/frontmatter parsing
 - [x] measure hit@k / MRR before changing models or chunking

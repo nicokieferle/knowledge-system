@@ -8,9 +8,12 @@ from knowledge_system.config import Settings
 from knowledge_system.evaluation import (
     EvalCase,
     EvalReport,
+    build_keyword_search,
     build_reusable_embedder_search,
+    build_search,
     evaluate_cases,
     format_human_report,
+    run_retrieval_eval,
 )
 from knowledge_system.search import SearchResult
 
@@ -132,3 +135,93 @@ def test_reusable_eval_search_builds_one_embedder_for_multiple_queries() -> None
     assert search("second", 5)[0].source_path == "second.md"
     assert len(created_embedders) == 1
     assert used_embedders == [created_embedders[0], created_embedders[0]]
+
+
+def test_keyword_eval_search_uses_keyword_retriever(monkeypatch) -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[tuple[str, int, str, bool]] = []
+
+    def fake_keyword_search(
+        passed_settings: Settings,
+        query: str,
+        limit: int,
+        text_config: str,
+        verbose: bool,
+    ) -> list[SearchResult]:
+        assert passed_settings is settings
+        calls.append((query, limit, text_config, verbose))
+        return [_result("keyword.md", "Keyword", 0.5)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.keyword_search", fake_keyword_search)
+
+    search = build_keyword_search(settings, text_config="simple", verbose=False)
+
+    assert search("Zinsen", 5)[0].source_path == "keyword.md"
+    assert calls == [("Zinsen", 5, "simple", False)]
+
+
+def test_build_search_defaults_to_vector(monkeypatch) -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[str] = []
+
+    def fake_vector_search(passed_settings: Settings, verbose: bool):
+        assert passed_settings is settings
+        assert verbose is False
+        calls.append("vector")
+        return lambda query, limit: [_result("vector.md", "Vector", 0.9)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_reusable_embedder_search", fake_vector_search)
+
+    assert build_search(settings, verbose=False)("query", 5)[0].source_path == "vector.md"
+    assert calls == ["vector"]
+
+
+def test_run_retrieval_eval_selects_keyword(monkeypatch, tmp_path: Path) -> None:
+    suite = tmp_path / "suite.jsonl"
+    suite.write_text(
+        '{"id":"C-1","query":"query","expected_sources":["keyword.md"]}',
+        encoding="utf-8",
+    )
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+
+    def fake_build_search(
+        passed_settings: Settings,
+        retriever: str,
+        text_config: str,
+        verbose: bool,
+    ):
+        assert passed_settings is settings
+        assert retriever == "keyword"
+        assert text_config == "simple"
+        assert verbose is False
+        return lambda query, limit: [_result("keyword.md", "Keyword", 0.5)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_search", fake_build_search)
+
+    report = run_retrieval_eval(
+        settings,
+        suite,
+        retriever="keyword",
+        text_config="simple",
+        verbose=False,
+    )
+
+    assert report.retriever == "keyword"
+    assert report.text_config == "simple"
+    assert report.hit_rate_at(1) == 1.0
+    assert report.to_dict()["retriever"] == "keyword"

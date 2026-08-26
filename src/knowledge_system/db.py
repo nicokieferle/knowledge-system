@@ -51,6 +51,22 @@ def init_db(settings: Settings) -> None:
 
         conn.execute(
             """
+            CREATE INDEX IF NOT EXISTS chunks_fts_german_idx
+            ON chunks
+            USING GIN (to_tsvector('german'::regconfig, heading_path || ' ' || content))
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS chunks_fts_simple_idx
+            ON chunks
+            USING GIN (to_tsvector('simple'::regconfig, heading_path || ' ' || content))
+            """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS index_metadata (
                 key text PRIMARY KEY,
                 value text NOT NULL,

@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = subparsers.add_parser("eval", help="Run retrieval quality evaluation")
     eval_parser.add_argument("--suite", type=Path, default=Path("eval/retrieval_v01.jsonl"))
     eval_parser.add_argument("--limit", type=int, default=5)
+    eval_parser.add_argument("--retriever", choices=("vector", "keyword"), default="vector")
+    eval_parser.add_argument("--text-config", choices=("german", "simple"), default="german")
     eval_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON only")
 
     return parser
@@ -76,10 +78,24 @@ def main() -> None:
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
                 io.StringIO()
             ):
-                report = run_retrieval_eval(settings, args.suite, limit=args.limit, verbose=False)
+                report = run_retrieval_eval(
+                    settings,
+                    args.suite,
+                    limit=args.limit,
+                    retriever=args.retriever,
+                    text_config=args.text_config,
+                    verbose=False,
+                )
             print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
         else:
-            report = run_retrieval_eval(settings, args.suite, limit=args.limit, verbose=True)
+            report = run_retrieval_eval(
+                settings,
+                args.suite,
+                limit=args.limit,
+                retriever=args.retriever,
+                text_config=args.text_config,
+                verbose=True,
+            )
             print(format_human_report(report))
         return
 

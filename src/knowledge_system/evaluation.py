@@ -4,10 +4,12 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .config import Settings
-from .search import SearchResult, semantic_search_with_embedder
+from .search import SearchResult, keyword_search, semantic_search_with_embedder
+
+RetrieverName = Literal["vector", "keyword"]
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,8 @@ class EvalReport:
     suite_path: Path
     limit: int
     case_results: tuple[EvalCaseResult, ...]
+    retriever: RetrieverName = "vector"
+    text_config: str | None = None
 
     @property
     def total(self) -> int:
@@ -56,6 +60,8 @@ class EvalReport:
         return {
             "suite_path": str(self.suite_path),
             "limit": self.limit,
+            "retriever": self.retriever,
+            "text_config": self.text_config,
             "total": self.total,
             "metrics": {
                 "hit_at_1": self.hit_rate_at(1),
@@ -190,16 +196,33 @@ def run_retrieval_eval(
     settings: Settings,
     suite_path: Path,
     limit: int = 5,
+    retriever: RetrieverName = "vector",
+    text_config: str = "german",
     verbose: bool = True,
 ) -> EvalReport:
     cases = load_eval_suite(suite_path)
-    search = build_reusable_embedder_search(settings, verbose=verbose)
+    search = build_search(settings, retriever=retriever, text_config=text_config, verbose=verbose)
 
     return EvalReport(
         suite_path=suite_path,
         limit=limit,
         case_results=evaluate_cases(cases, search, limit=limit),
+        retriever=retriever,
+        text_config=text_config if retriever == "keyword" else None,
     )
+
+
+def build_search(
+    settings: Settings,
+    retriever: RetrieverName = "vector",
+    text_config: str = "german",
+    verbose: bool = True,
+) -> SearchFn:
+    if retriever == "vector":
+        return build_reusable_embedder_search(settings, verbose=verbose)
+    if retriever == "keyword":
+        return build_keyword_search(settings, text_config=text_config, verbose=verbose)
+    raise ValueError(f"Unsupported retriever `{retriever}`")
 
 
 def build_reusable_embedder_search(
@@ -221,9 +244,27 @@ def build_reusable_embedder_search(
     return search
 
 
+def build_keyword_search(
+    settings: Settings,
+    text_config: str = "german",
+    verbose: bool = True,
+) -> SearchFn:
+    def search(query: str, search_limit: int) -> list[SearchResult]:
+        return keyword_search(
+            settings,
+            query,
+            limit=search_limit,
+            text_config=text_config,
+            verbose=verbose,
+        )
+
+    return search
+
+
 def format_human_report(report: EvalReport) -> str:
     lines = [
         f"[eval] suite={report.suite_path}",
+        f"[eval] retriever={report.retriever}",
         f"[eval] cases={report.total} limit={report.limit}",
         "",
         "[eval] Summary",
@@ -234,6 +275,8 @@ def format_human_report(report: EvalReport) -> str:
         "",
         "[eval] Cases",
     ]
+    if report.text_config:
+        lines.insert(2, f"[eval] text_config={report.text_config}")
 
     for result in report.case_results:
         status = "PASS" if result.first_relevant_rank is not None else "FAIL"
