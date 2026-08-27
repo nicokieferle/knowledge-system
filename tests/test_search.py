@@ -9,10 +9,10 @@ from knowledge_system.search import SearchResult, keyword_search, reciprocal_ran
 
 
 class FakeRows:
-    def __init__(self, rows: list[tuple[str, str, str, float]]) -> None:
+    def __init__(self, rows: list[tuple[str, str, str, str, str, float]]) -> None:
         self.rows = rows
 
-    def fetchall(self) -> list[tuple[str, str, str, float]]:
+    def fetchall(self) -> list[tuple[str, str, str, str, str, float]]:
         return self.rows
 
 
@@ -26,6 +26,7 @@ class FakeConnection:
             [
                 (
                     "chunk-inflation-1",
+                    "knowledge-git",
                     "economics/inflation.md",
                     "Inflation > Angebotsschocks",
                     "Inflation > Angebotsschocks\n\nEngpässe und Energiepreise.",
@@ -61,6 +62,7 @@ def test_keyword_search_returns_ranked_results_for_german_terms(monkeypatch) -> 
     )
 
     assert results[0].source_path == "economics/inflation.md"
+    assert results[0].source_id == "knowledge-git"
     assert results[0].heading_path == "Inflation > Angebotsschocks"
     assert results[0].similarity == 0.42
     assert fake_conn.calls[0][1][:4] == (

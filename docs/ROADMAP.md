@@ -25,9 +25,10 @@
 
 ## V1 — service layer
 
-- [ ] FastAPI/internal service
-- [ ] source adapter abstraction
-- [ ] structured search/fetch API
+- [x] internal KnowledgeService boundary
+- [x] source adapter abstraction
+- [x] structured search/fetch API
+- [ ] FastAPI service
 - [ ] permissions per source
 - [ ] structured logging
 

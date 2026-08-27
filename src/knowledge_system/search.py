@@ -16,6 +16,7 @@ class SearchResult:
     content: str
     similarity: float
     chunk_key: str = ""
+    source_id: str = "knowledge-git"
 
 
 class Embedder(Protocol):
@@ -51,6 +52,7 @@ def semantic_search_with_embedder(
             """
             SELECT
                 chunk_key,
+                source_id,
                 source_path,
                 heading_path,
                 content,
@@ -68,10 +70,11 @@ def semantic_search_with_embedder(
     return [
         SearchResult(
             chunk_key=row[0],
-            source_path=row[1],
-            heading_path=row[2],
-            content=row[3],
-            similarity=float(row[4]),
+            source_id=row[1],
+            source_path=row[2],
+            heading_path=row[3],
+            content=row[4],
+            similarity=float(row[5]),
         )
         for row in rows
     ]
@@ -120,6 +123,7 @@ def keyword_search(
             )
             SELECT
                 chunk_key,
+                source_id,
                 source_path,
                 heading_path,
                 content,
@@ -141,10 +145,11 @@ def keyword_search(
     return [
         SearchResult(
             chunk_key=row[0],
-            source_path=row[1],
-            heading_path=row[2],
-            content=row[3],
-            similarity=float(row[4]),
+            source_id=row[1],
+            source_path=row[2],
+            heading_path=row[3],
+            content=row[4],
+            similarity=float(row[5]),
         )
         for row in rows
     ]
@@ -177,6 +182,7 @@ def reciprocal_rank_fusion(
     fused = [
         SearchResult(
             chunk_key=result.chunk_key,
+            source_id=result.source_id,
             source_path=result.source_path,
             heading_path=result.heading_path,
             content=result.content,
@@ -199,5 +205,5 @@ def reciprocal_rank_fusion(
 
 def _chunk_identity(result: SearchResult) -> tuple[str, str, str, str]:
     if result.chunk_key:
-        return (result.chunk_key, "", "", "")
-    return ("", result.source_path, result.heading_path, result.content)
+        return (result.source_id, result.chunk_key, "", "")
+    return (result.source_id, result.source_path, result.heading_path, result.content)

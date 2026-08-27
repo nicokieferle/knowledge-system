@@ -1,49 +1,44 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from pgvector import Vector
 
-from .chunking import Chunk, chunk_markdown
+from .chunking import Chunk, chunk_markdown_text
 from .config import Settings
 from .db import connect
+from .sources import GitMarkdownSource, SourceAdapter
 
 ExistingChunkState = tuple[str, str]
-ROOT_MARKDOWN_EXCLUDES = {"README.md"}
 
 
-def discover_markdown(root: Path) -> list[Path]:
-    return sorted(
-        path
-        for path in root.rglob("*.md")
-        if path.is_file()
-        and path.relative_to(root).as_posix() not in ROOT_MARKDOWN_EXCLUDES
-        and not any(part.startswith(".") for part in path.relative_to(root).parts)
-    )
-
-
-def _load_existing_chunk_state(settings: Settings) -> dict[str, ExistingChunkState]:
+def _load_existing_chunk_state(
+    settings: Settings,
+    source_id: str,
+) -> dict[str, ExistingChunkState]:
     with connect(settings) as conn:
-        rows = conn.execute("SELECT chunk_key, content_hash, embedding_model FROM chunks").fetchall()
+        rows = conn.execute(
+            """
+            SELECT chunk_key, content_hash, embedding_model
+            FROM chunks
+            WHERE source_id = %s
+            """,
+            (source_id,),
+        ).fetchall()
     return {row[0]: (row[1], row[2]) for row in rows}
 
 
-def index_knowledge(settings: Settings) -> None:
-    root = settings.knowledge_root
-    if not root.exists():
-        raise FileNotFoundError(f"Knowledge root does not exist: {root}")
-
-    files = discover_markdown(root)
-    print(f"[index] Found {len(files)} Markdown files under {root}")
+def index_knowledge(settings: Settings, source: SourceAdapter | None = None) -> None:
+    source = source or GitMarkdownSource(settings.knowledge_root)
+    documents = source.discover()
+    print(f"[index] Found {len(documents)} document(s) from source {source.source_id}")
 
     all_chunks: list[Chunk] = []
 
-    for path in files:
-        file_chunks = chunk_markdown(path, root)
-        print(f"[index] {path.relative_to(root)} -> {len(file_chunks)} chunks")
+    for document in documents:
+        file_chunks = chunk_markdown_text(document.content, document.source_path)
+        print(f"[index] {document.source_path} -> {len(file_chunks)} chunks")
         all_chunks.extend(file_chunks)
 
-    existing_chunks = _load_existing_chunk_state(settings)
+    existing_chunks = _load_existing_chunk_state(settings, source.source_id)
     current_keys = {chunk.chunk_key for chunk in all_chunks}
 
     changed = [
@@ -72,6 +67,7 @@ def index_knowledge(settings: Settings) -> None:
                 """
                 INSERT INTO chunks (
                     chunk_key,
+                    source_id,
                     source_path,
                     heading_path,
                     ordinal,
@@ -81,8 +77,9 @@ def index_knowledge(settings: Settings) -> None:
                     embedding,
                     indexed_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, now())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                 ON CONFLICT (chunk_key) DO UPDATE SET
+                    source_id = EXCLUDED.source_id,
                     source_path = EXCLUDED.source_path,
                     heading_path = EXCLUDED.heading_path,
                     ordinal = EXCLUDED.ordinal,
@@ -94,6 +91,7 @@ def index_knowledge(settings: Settings) -> None:
                 """,
                 (
                     chunk.chunk_key,
+                    source.source_id,
                     chunk.source_path,
                     chunk.heading_path,
                     chunk.ordinal,
@@ -106,11 +104,11 @@ def index_knowledge(settings: Settings) -> None:
 
         if current_keys:
             conn.execute(
-                "DELETE FROM chunks WHERE NOT (chunk_key = ANY(%s))",
-                (list(current_keys),),
+                "DELETE FROM chunks WHERE source_id = %s AND NOT (chunk_key = ANY(%s))",
+                (source.source_id, list(current_keys)),
             )
         else:
-            conn.execute("DELETE FROM chunks")
+            conn.execute("DELETE FROM chunks WHERE source_id = %s", (source.source_id,))
 
         conn.execute(
             """

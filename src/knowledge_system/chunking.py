@@ -68,8 +68,13 @@ def _strip_frontmatter(text: str) -> str:
 
 def chunk_markdown(path: Path, root: Path) -> list[Chunk]:
     """Split Markdown primarily by semantic headings, then by paragraph size."""
-    text = _strip_frontmatter(path.read_text(encoding="utf-8"))
     relative_path = path.relative_to(root).as_posix()
+    return chunk_markdown_text(path.read_text(encoding="utf-8"), relative_path)
+
+
+def chunk_markdown_text(text: str, source_path: str) -> list[Chunk]:
+    """Split Markdown text while preserving the existing source-path based chunk keys."""
+    text = _strip_frontmatter(text)
 
     heading_stack: list[tuple[int, str]] = []
     section_heading = "(document)"
@@ -106,11 +111,11 @@ def chunk_markdown(path: Path, root: Path) -> list[Chunk]:
         for piece in _split_long_section(section_text):
             # Include heading context in the embedded content so short sections remain meaningful.
             content = f"{heading_path}\n\n{piece}".strip()
-            key_basis = f"{relative_path}|{heading_path}|{ordinal}"
+            key_basis = f"{source_path}|{heading_path}|{ordinal}"
             chunks.append(
                 Chunk(
                     chunk_key=_hash_text(key_basis),
-                    source_path=relative_path,
+                    source_path=source_path,
                     heading_path=heading_path,
                     ordinal=ordinal,
                     content=content,

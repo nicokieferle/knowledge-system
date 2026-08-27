@@ -63,6 +63,7 @@ class LocalReranker:
         reranked = [
             SearchResult(
                 chunk_key=candidate.chunk_key,
+                source_id=candidate.source_id,
                 source_path=candidate.source_path,
                 heading_path=candidate.heading_path,
                 content=candidate.content,

@@ -59,6 +59,7 @@ def test_reranker_preserves_chunk_metadata() -> None:
     result = reranker.rerank("query", [candidate], limit=5)[0]
 
     assert result.chunk_key == candidate.chunk_key
+    assert result.source_id == candidate.source_id
     assert result.source_path == candidate.source_path
     assert result.heading_path == candidate.heading_path
     assert result.content == candidate.content
@@ -73,6 +74,7 @@ def _candidate(
 ) -> SearchResult:
     return SearchResult(
         chunk_key=chunk_key,
+        source_id="knowledge-git",
         source_path=source_path,
         heading_path=heading_path,
         content=content,

@@ -17,9 +17,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init-db", help="Create pgvector extension and index tables")
     subparsers.add_parser("index", help="Incrementally index Markdown knowledge")
 
-    search_parser = subparsers.add_parser("search", help="Semantic search over indexed knowledge")
+    search_parser = subparsers.add_parser("search", help="Search over indexed knowledge")
     search_parser.add_argument("query")
     search_parser.add_argument("--limit", type=int, default=5)
+    search_parser.add_argument("--mode", choices=("fast", "quality"), default="quality")
 
     eval_parser = subparsers.add_parser("eval", help="Run retrieval quality evaluation")
     eval_parser.add_argument("--suite", type=Path, default=Path("eval/retrieval_v01.jsonl"))
@@ -51,23 +52,23 @@ def main() -> None:
 
     if args.command == "index":
         print(f"[config] embedding_model={settings.embedding_model}")
-        from .indexer import index_knowledge
+        from .service import KnowledgeService
 
-        index_knowledge(settings)
+        KnowledgeService(settings).index()
         return
 
     if args.command == "search":
-        print(f"[config] embedding_model={settings.embedding_model}")
-        from .search import semantic_search
+        print(f"[search] mode={args.mode}")
+        from .service import KnowledgeService
 
-        results = semantic_search(settings, args.query, args.limit)
+        results = KnowledgeService(settings).search(args.query, mode=args.mode, limit=args.limit)
         if not results:
             print("No results.")
             return
 
         for idx, result in enumerate(results, start=1):
             print(
-                f"\n[{idx}] similarity={result.similarity:.4f} "
+                f"\n[{idx}] score={result.score:.4f} source={result.source_id} "
                 f"path={result.source_path} heading={result.heading_path}"
             )
             print(result.content)

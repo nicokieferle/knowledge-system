@@ -21,7 +21,25 @@ Later versions can add hybrid retrieval, MCP, proposals, approval/rejection and 
 ## Architecture
 
 ```text
-knowledge/*.md (Git)
+Client / CLI
+        |
+        v
+KnowledgeService
+        |
+        v
+Retrieval + SourceAdapter
+        |
+        v
+GitMarkdownSource -> knowledge/*.md (source of truth)
+        |
+        v
+PostgreSQL + pgvector / full-text indexes (disposable retrieval cache)
+```
+
+Indexing still derives everything from source documents:
+
+```text
+GitMarkdownSource
         |
         v
 Markdown chunker
@@ -31,9 +49,6 @@ local embedding model
         |
         v
 PostgreSQL + pgvector
-        |
-        v
-semantic search
 ```
 
 ## Quick start
@@ -108,6 +123,16 @@ Experimental keyword-candidate reranking with `BAAI/bge-reranker-v2-m3`:
 ```bash
 knowledge eval --suite eval/retrieval_v01.jsonl --retriever reranker
 ```
+
+Product-facing search goes through the internal service boundary:
+
+```bash
+knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?" --mode quality
+knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?" --mode fast
+```
+
+`quality` uses keyword candidates plus the local reranker. `fast` uses PostgreSQL keyword
+search with the German text-search configuration.
 
 Machine-readable output:
 

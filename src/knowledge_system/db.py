@@ -29,6 +29,7 @@ def init_db(settings: Settings) -> None:
             f"""
             CREATE TABLE IF NOT EXISTS chunks (
                 chunk_key text PRIMARY KEY,
+                source_id text NOT NULL DEFAULT 'knowledge-git',
                 source_path text NOT NULL,
                 heading_path text NOT NULL,
                 ordinal integer NOT NULL,
@@ -36,16 +37,37 @@ def init_db(settings: Settings) -> None:
                 content_hash text NOT NULL,
                 embedding_model text NOT NULL,
                 embedding vector({settings.embedding_dimensions}) NOT NULL,
-                indexed_at timestamptz NOT NULL DEFAULT now(),
-                UNIQUE (source_path, ordinal)
+                indexed_at timestamptz NOT NULL DEFAULT now()
             )
             """
         )
 
         conn.execute(
             """
+            ALTER TABLE chunks
+            ADD COLUMN IF NOT EXISTS source_id text NOT NULL DEFAULT 'knowledge-git'
+            """
+        )
+        conn.execute("ALTER TABLE chunks DROP CONSTRAINT IF EXISTS chunks_source_path_ordinal_key")
+
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS chunks_source_path_idx
             ON chunks (source_path)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS chunks_source_id_source_path_idx
+            ON chunks (source_id, source_path)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_id_source_path_ordinal_idx
+            ON chunks (source_id, source_path, ordinal)
             """
         )
 
