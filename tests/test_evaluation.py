@@ -8,6 +8,7 @@ from knowledge_system.config import Settings
 from knowledge_system.evaluation import (
     EvalCase,
     EvalReport,
+    build_hybrid_search,
     build_keyword_search,
     build_reusable_embedder_search,
     build_search,
@@ -18,8 +19,14 @@ from knowledge_system.evaluation import (
 from knowledge_system.search import SearchResult
 
 
-def _result(source_path: str, heading_path: str, similarity: float) -> SearchResult:
+def _result(
+    source_path: str,
+    heading_path: str,
+    similarity: float,
+    chunk_key: str = "",
+) -> SearchResult:
     return SearchResult(
+        chunk_key=chunk_key,
         source_path=source_path,
         heading_path=heading_path,
         content="content",
@@ -186,6 +193,67 @@ def test_build_search_defaults_to_vector(monkeypatch) -> None:
     assert calls == ["vector"]
 
 
+def test_build_search_selects_hybrid(monkeypatch) -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[str] = []
+
+    def fake_hybrid_search(passed_settings: Settings, verbose: bool):
+        assert passed_settings is settings
+        assert verbose is False
+        calls.append("hybrid")
+        return lambda query, limit: [_result("hybrid.md", "Hybrid", 0.9)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_hybrid_search", fake_hybrid_search)
+
+    assert build_search(settings, retriever="hybrid", verbose=False)("query", 5)[0].source_path == "hybrid.md"
+    assert calls == ["hybrid"]
+
+
+def test_hybrid_eval_search_fuses_top_20_vector_and_keyword_candidates() -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[tuple[str, str, int]] = []
+
+    def vector_search(query: str, limit: int) -> list[SearchResult]:
+        calls.append(("vector", query, limit))
+        return [
+            _result("vector-only.md", "Vector", 0.9, chunk_key="chunk-vector-only"),
+            _result("shared.md", "Shared", 0.8, chunk_key="chunk-shared"),
+        ]
+
+    def keyword_search_fn(query: str, limit: int) -> list[SearchResult]:
+        calls.append(("keyword", query, limit))
+        return [
+            _result("shared.md", "Shared", 0.4, chunk_key="chunk-shared"),
+            _result("keyword-only.md", "Keyword", 0.3, chunk_key="chunk-keyword-only"),
+        ]
+
+    search = build_hybrid_search(
+        settings,
+        verbose=False,
+        vector_search=vector_search,
+        keyword_search_fn=keyword_search_fn,
+    )
+
+    results = search("query", 5)
+
+    assert calls == [("vector", "query", 20), ("keyword", "query", 20)]
+    assert [result.chunk_key for result in results] == [
+        "chunk-shared",
+        "chunk-vector-only",
+        "chunk-keyword-only",
+    ]
+
+
 def test_run_retrieval_eval_selects_keyword(monkeypatch, tmp_path: Path) -> None:
     suite = tmp_path / "suite.jsonl"
     suite.write_text(
@@ -225,3 +293,44 @@ def test_run_retrieval_eval_selects_keyword(monkeypatch, tmp_path: Path) -> None
     assert report.text_config == "simple"
     assert report.hit_rate_at(1) == 1.0
     assert report.to_dict()["retriever"] == "keyword"
+
+
+def test_run_retrieval_eval_selects_hybrid_with_german_keyword(monkeypatch, tmp_path: Path) -> None:
+    suite = tmp_path / "suite.jsonl"
+    suite.write_text(
+        '{"id":"C-1","query":"query","expected_sources":["hybrid.md"]}',
+        encoding="utf-8",
+    )
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+
+    def fake_build_search(
+        passed_settings: Settings,
+        retriever: str,
+        text_config: str,
+        verbose: bool,
+    ):
+        assert passed_settings is settings
+        assert retriever == "hybrid"
+        assert text_config == "german"
+        assert verbose is False
+        return lambda query, limit: [_result("hybrid.md", "Hybrid", 0.5)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_search", fake_build_search)
+
+    report = run_retrieval_eval(
+        settings,
+        suite,
+        retriever="hybrid",
+        text_config="simple",
+        verbose=False,
+    )
+
+    assert report.retriever == "hybrid"
+    assert report.text_config == "german"
+    assert report.hit_rate_at(1) == 1.0
+    assert report.to_dict()["retriever"] == "hybrid"

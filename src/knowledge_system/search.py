@@ -15,6 +15,7 @@ class SearchResult:
     heading_path: str
     content: str
     similarity: float
+    chunk_key: str = ""
 
 
 class Embedder(Protocol):
@@ -22,6 +23,7 @@ class Embedder(Protocol):
 
 
 TEXT_SEARCH_CONFIGS = {"german", "simple"}
+RRF_K = 60
 
 
 def _validate_text_search_config(text_config: str) -> str:
@@ -48,6 +50,7 @@ def semantic_search_with_embedder(
         rows = conn.execute(
             """
             SELECT
+                chunk_key,
                 source_path,
                 heading_path,
                 content,
@@ -64,10 +67,11 @@ def semantic_search_with_embedder(
         print(f"[search] Retrieved {len(rows)} result(s)")
     return [
         SearchResult(
-            source_path=row[0],
-            heading_path=row[1],
-            content=row[2],
-            similarity=float(row[3]),
+            chunk_key=row[0],
+            source_path=row[1],
+            heading_path=row[2],
+            content=row[3],
+            similarity=float(row[4]),
         )
         for row in rows
     ]
@@ -115,6 +119,7 @@ def keyword_search(
                 FROM query_terms
             )
             SELECT
+                chunk_key,
                 source_path,
                 heading_path,
                 content,
@@ -135,10 +140,64 @@ def keyword_search(
         print(f"[search] Retrieved {len(rows)} keyword result(s)")
     return [
         SearchResult(
-            source_path=row[0],
-            heading_path=row[1],
-            content=row[2],
-            similarity=float(row[3]),
+            chunk_key=row[0],
+            source_path=row[1],
+            heading_path=row[2],
+            content=row[3],
+            similarity=float(row[4]),
         )
         for row in rows
     ]
+
+
+def rrf_score(rank: int, k: int = RRF_K) -> float:
+    if rank < 1:
+        raise ValueError("RRF rank must be at least 1")
+    return 1.0 / (k + rank)
+
+
+def reciprocal_rank_fusion(
+    ranked_result_lists: list[list[SearchResult]],
+    limit: int,
+    k: int = RRF_K,
+) -> list[SearchResult]:
+    scores: dict[tuple[str, str, str, str], float] = {}
+    results_by_identity: dict[tuple[str, str, str, str], SearchResult] = {}
+
+    for results in ranked_result_lists:
+        seen_in_list: set[tuple[str, str, str, str]] = set()
+        for rank, result in enumerate(results, start=1):
+            identity = _chunk_identity(result)
+            if identity in seen_in_list:
+                continue
+            seen_in_list.add(identity)
+            results_by_identity.setdefault(identity, result)
+            scores[identity] = scores.get(identity, 0.0) + rrf_score(rank, k=k)
+
+    fused = [
+        SearchResult(
+            chunk_key=result.chunk_key,
+            source_path=result.source_path,
+            heading_path=result.heading_path,
+            content=result.content,
+            similarity=scores[identity],
+        )
+        for identity, result in results_by_identity.items()
+    ]
+
+    return sorted(
+        fused,
+        key=lambda result: (
+            -result.similarity,
+            result.source_path,
+            result.heading_path,
+            result.chunk_key,
+            result.content,
+        ),
+    )[:limit]
+
+
+def _chunk_identity(result: SearchResult) -> tuple[str, str, str, str]:
+    if result.chunk_key:
+        return (result.chunk_key, "", "", "")
+    return ("", result.source_path, result.heading_path, result.content)

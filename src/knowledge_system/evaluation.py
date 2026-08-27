@@ -7,9 +7,15 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .config import Settings
-from .search import SearchResult, keyword_search, semantic_search_with_embedder
+from .search import (
+    SearchResult,
+    keyword_search,
+    reciprocal_rank_fusion,
+    semantic_search_with_embedder,
+)
 
-RetrieverName = Literal["vector", "keyword"]
+RetrieverName = Literal["vector", "keyword", "hybrid"]
+HYBRID_CANDIDATE_LIMIT = 20
 
 
 @dataclass(frozen=True)
@@ -200,6 +206,8 @@ def run_retrieval_eval(
     text_config: str = "german",
     verbose: bool = True,
 ) -> EvalReport:
+    if retriever == "hybrid":
+        text_config = "german"
     cases = load_eval_suite(suite_path)
     search = build_search(settings, retriever=retriever, text_config=text_config, verbose=verbose)
 
@@ -208,7 +216,7 @@ def run_retrieval_eval(
         limit=limit,
         case_results=evaluate_cases(cases, search, limit=limit),
         retriever=retriever,
-        text_config=text_config if retriever == "keyword" else None,
+        text_config=text_config if retriever in {"keyword", "hybrid"} else None,
     )
 
 
@@ -222,6 +230,8 @@ def build_search(
         return build_reusable_embedder_search(settings, verbose=verbose)
     if retriever == "keyword":
         return build_keyword_search(settings, text_config=text_config, verbose=verbose)
+    if retriever == "hybrid":
+        return build_hybrid_search(settings, verbose=verbose)
     raise ValueError(f"Unsupported retriever `{retriever}`")
 
 
@@ -257,6 +267,32 @@ def build_keyword_search(
             text_config=text_config,
             verbose=verbose,
         )
+
+    return search
+
+
+def build_hybrid_search(
+    settings: Settings,
+    verbose: bool = True,
+    candidate_limit: int = HYBRID_CANDIDATE_LIMIT,
+    vector_search: SearchFn | None = None,
+    keyword_search_fn: SearchFn | None = None,
+) -> SearchFn:
+    if vector_search is None:
+        vector_search = build_reusable_embedder_search(settings, verbose=verbose)
+    if keyword_search_fn is None:
+        keyword_search_fn = build_keyword_search(settings, text_config="german", verbose=verbose)
+
+    def search(query: str, search_limit: int) -> list[SearchResult]:
+        effective_candidate_limit = max(candidate_limit, search_limit)
+        if verbose:
+            print(
+                "[search] Fusing hybrid results: "
+                f"rrf_k=60 candidate_limit={effective_candidate_limit}"
+            )
+        vector_results = vector_search(query, effective_candidate_limit)
+        keyword_results = keyword_search_fn(query, effective_candidate_limit)
+        return reciprocal_rank_fusion([vector_results, keyword_results], limit=search_limit)
 
     return search
 

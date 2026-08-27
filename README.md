@@ -97,6 +97,12 @@ keyword baseline can be measured without changing the eval suite:
 knowledge eval --suite eval/retrieval_v01.jsonl --retriever keyword --text-config german
 ```
 
+Experimental Reciprocal Rank Fusion of the vector baseline and German keyword baseline:
+
+```bash
+knowledge eval --suite eval/retrieval_v01.jsonl --retriever hybrid
+```
+
 Machine-readable output:
 
 ```bash

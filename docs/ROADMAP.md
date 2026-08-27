@@ -18,7 +18,7 @@
 - [x] add Hit@1 / Hit@3 / Hit@5 / MRR baseline runner
 - [x] expand the retrieval test set to 20–50 questions once enough real knowledge exists
 - [x] add PostgreSQL full-text keyword search
-- [ ] combine keyword + vector results with Reciprocal Rank Fusion
+- [x] combine keyword + vector results with Reciprocal Rank Fusion
 - [ ] add metadata/frontmatter parsing
 - [x] measure hit@k / MRR before changing models or chunking
 
