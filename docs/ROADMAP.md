@@ -19,6 +19,7 @@
 - [x] expand the retrieval test set to 20–50 questions once enough real knowledge exists
 - [x] add PostgreSQL full-text keyword search
 - [x] combine keyword + vector results with Reciprocal Rank Fusion
+- [x] test keyword-candidate reranking with a multilingual cross-encoder
 - [ ] add metadata/frontmatter parsing
 - [x] measure hit@k / MRR before changing models or chunking
 

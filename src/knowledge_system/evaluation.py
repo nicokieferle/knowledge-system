@@ -4,7 +4,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from .config import Settings
 from .search import (
@@ -14,8 +14,9 @@ from .search import (
     semantic_search_with_embedder,
 )
 
-RetrieverName = Literal["vector", "keyword", "hybrid"]
+RetrieverName = Literal["vector", "keyword", "hybrid", "reranker"]
 HYBRID_CANDIDATE_LIMIT = 20
+RERANKER_CANDIDATE_LIMIT = 10
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,15 @@ class EvalReport:
 SearchFn = Callable[[str, int], list[SearchResult]]
 SearchWithEmbedderFn = Callable[[Settings, str, object, int, bool], list[SearchResult]]
 EmbedderFactory = Callable[[str, int, bool], object]
+
+
+class RerankerFn(Protocol):
+    def rerank(
+        self,
+        query: str,
+        candidates: list[SearchResult],
+        limit: int = 5,
+    ) -> list[SearchResult]: ...
 
 
 def _string_list(value: object, field_name: str, line_number: int) -> tuple[str, ...]:
@@ -206,7 +216,7 @@ def run_retrieval_eval(
     text_config: str = "german",
     verbose: bool = True,
 ) -> EvalReport:
-    if retriever == "hybrid":
+    if retriever in {"hybrid", "reranker"}:
         text_config = "german"
     cases = load_eval_suite(suite_path)
     search = build_search(settings, retriever=retriever, text_config=text_config, verbose=verbose)
@@ -216,7 +226,7 @@ def run_retrieval_eval(
         limit=limit,
         case_results=evaluate_cases(cases, search, limit=limit),
         retriever=retriever,
-        text_config=text_config if retriever in {"keyword", "hybrid"} else None,
+        text_config=text_config if retriever in {"keyword", "hybrid", "reranker"} else None,
     )
 
 
@@ -232,6 +242,8 @@ def build_search(
         return build_keyword_search(settings, text_config=text_config, verbose=verbose)
     if retriever == "hybrid":
         return build_hybrid_search(settings, verbose=verbose)
+    if retriever == "reranker":
+        return build_reranker_search(settings, verbose=verbose)
     raise ValueError(f"Unsupported retriever `{retriever}`")
 
 
@@ -293,6 +305,37 @@ def build_hybrid_search(
         vector_results = vector_search(query, effective_candidate_limit)
         keyword_results = keyword_search_fn(query, effective_candidate_limit)
         return reciprocal_rank_fusion([vector_results, keyword_results], limit=search_limit)
+
+    return search
+
+
+def build_reranker_search(
+    settings: Settings,
+    verbose: bool = True,
+    candidate_limit: int = RERANKER_CANDIDATE_LIMIT,
+    candidate_search: SearchFn | None = None,
+    reranker: RerankerFn | None = None,
+) -> SearchFn:
+    if candidate_search is None:
+        candidate_search = build_keyword_search(
+            settings,
+            text_config="german",
+            verbose=verbose,
+        )
+    if reranker is None:
+        from .reranker import LocalReranker
+
+        reranker = LocalReranker(verbose=verbose)
+
+    def search(query: str, search_limit: int) -> list[SearchResult]:
+        effective_candidate_limit = max(candidate_limit, search_limit)
+        if verbose:
+            print(
+                "[search] Reranking keyword candidates: "
+                f"candidate_limit={effective_candidate_limit}"
+            )
+        candidates = candidate_search(query, effective_candidate_limit)
+        return reranker.rerank(query, candidates, limit=search_limit)
 
     return search
 

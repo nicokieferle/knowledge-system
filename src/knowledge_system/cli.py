@@ -24,7 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser = subparsers.add_parser("eval", help="Run retrieval quality evaluation")
     eval_parser.add_argument("--suite", type=Path, default=Path("eval/retrieval_v01.jsonl"))
     eval_parser.add_argument("--limit", type=int, default=5)
-    eval_parser.add_argument("--retriever", choices=("vector", "keyword", "hybrid"), default="vector")
+    eval_parser.add_argument(
+        "--retriever",
+        choices=("vector", "keyword", "hybrid", "reranker"),
+        default="vector",
+    )
     eval_parser.add_argument("--text-config", choices=("german", "simple"), default="german")
     eval_parser.add_argument("--json", action="store_true", help="Print machine-readable JSON only")
 

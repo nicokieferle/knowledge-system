@@ -103,6 +103,12 @@ Experimental Reciprocal Rank Fusion of the vector baseline and German keyword ba
 knowledge eval --suite eval/retrieval_v01.jsonl --retriever hybrid
 ```
 
+Experimental keyword-candidate reranking with `BAAI/bge-reranker-v2-m3`:
+
+```bash
+knowledge eval --suite eval/retrieval_v01.jsonl --retriever reranker
+```
+
 Machine-readable output:
 
 ```bash
@@ -122,7 +128,6 @@ Keyword eval currently supports PostgreSQL `german` and `simple` text search con
 - no ChatGPT integration
 - no automatic knowledge writes
 - no pull-request workflow
-- no reranker
 - no HNSW index
 - no journal adapter
 

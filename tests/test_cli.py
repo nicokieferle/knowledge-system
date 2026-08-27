@@ -158,6 +158,45 @@ def test_eval_json_output_supports_hybrid_retriever(monkeypatch, capsys) -> None
     assert output["text_config"] == "german"
 
 
+def test_eval_json_output_supports_reranker_retriever(monkeypatch, capsys) -> None:
+    from knowledge_system import cli
+
+    def fake_get_settings() -> Settings:
+        return Settings(
+            database_url="postgresql://example",
+            knowledge_root=Path("knowledge"),
+            embedding_model="model",
+            embedding_dimensions=384,
+        )
+
+    def fake_run_retrieval_eval(
+        settings: Settings,
+        suite_path: Path,
+        limit: int,
+        retriever: str,
+        text_config: str,
+        verbose: bool,
+    ) -> EvalReport:
+        assert retriever == "reranker"
+        assert text_config == "german"
+        assert verbose is False
+        return _report(retriever="reranker", text_config="german")
+
+    monkeypatch.setattr(cli, "get_settings", fake_get_settings)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["knowledge", "eval", "--json", "--retriever", "reranker"],
+    )
+    monkeypatch.setattr("knowledge_system.evaluation.run_retrieval_eval", fake_run_retrieval_eval)
+
+    cli.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["retriever"] == "reranker"
+    assert output["text_config"] == "german"
+
+
 def _report(retriever: str, text_config: str | None = None) -> EvalReport:
     case = EvalCase(id="C-1", query="query", expected_sources=("result.md",))
     result = SearchResult(

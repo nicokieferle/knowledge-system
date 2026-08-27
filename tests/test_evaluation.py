@@ -10,6 +10,7 @@ from knowledge_system.evaluation import (
     EvalReport,
     build_hybrid_search,
     build_keyword_search,
+    build_reranker_search,
     build_reusable_embedder_search,
     build_search,
     evaluate_cases,
@@ -214,6 +215,27 @@ def test_build_search_selects_hybrid(monkeypatch) -> None:
     assert calls == ["hybrid"]
 
 
+def test_build_search_selects_reranker(monkeypatch) -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[str] = []
+
+    def fake_reranker_search(passed_settings: Settings, verbose: bool):
+        assert passed_settings is settings
+        assert verbose is False
+        calls.append("reranker")
+        return lambda query, limit: [_result("reranked.md", "Reranked", 0.9)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_reranker_search", fake_reranker_search)
+
+    assert build_search(settings, retriever="reranker", verbose=False)("query", 5)[0].source_path == "reranked.md"
+    assert calls == ["reranker"]
+
+
 def test_hybrid_eval_search_fuses_top_20_vector_and_keyword_candidates() -> None:
     settings = Settings(
         database_url="postgresql://example",
@@ -252,6 +274,87 @@ def test_hybrid_eval_search_fuses_top_20_vector_and_keyword_candidates() -> None
         "chunk-vector-only",
         "chunk-keyword-only",
     ]
+
+
+def test_reranker_eval_search_reranks_top_10_keyword_candidates() -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    calls: list[tuple[str, int]] = []
+
+    def candidate_search(query: str, limit: int) -> list[SearchResult]:
+        calls.append((query, limit))
+        return [
+            _result("first.md", "First", 0.7, chunk_key="chunk-first"),
+            _result("second.md", "Second", 0.6, chunk_key="chunk-second"),
+        ]
+
+    class FakeReranker:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[str, ...], int]] = []
+
+        def rerank(
+            self,
+            query: str,
+            candidates: list[SearchResult],
+            limit: int,
+        ) -> list[SearchResult]:
+            self.calls.append((query, tuple(result.chunk_key for result in candidates), limit))
+            return list(reversed(candidates))[:limit]
+
+    reranker = FakeReranker()
+    search = build_reranker_search(
+        settings,
+        verbose=False,
+        candidate_search=candidate_search,
+        reranker=reranker,
+    )
+
+    results = search("query", 5)
+
+    assert calls == [("query", 10)]
+    assert reranker.calls == [("query", ("chunk-first", "chunk-second"), 5)]
+    assert [result.chunk_key for result in results] == ["chunk-second", "chunk-first"]
+
+
+def test_reranker_eval_reuses_one_model_for_multiple_queries() -> None:
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+
+    def candidate_search(query: str, limit: int) -> list[SearchResult]:
+        return [_result(f"{query}.md", "Heading", 0.7, chunk_key=f"chunk-{query}")]
+
+    class FakeReranker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def rerank(
+            self,
+            query: str,
+            candidates: list[SearchResult],
+            limit: int,
+        ) -> list[SearchResult]:
+            self.calls.append(query)
+            return candidates[:limit]
+
+    reranker = FakeReranker()
+    search = build_reranker_search(
+        settings,
+        verbose=False,
+        candidate_search=candidate_search,
+        reranker=reranker,
+    )
+
+    assert search("first", 5)[0].source_path == "first.md"
+    assert search("second", 5)[0].source_path == "second.md"
+    assert reranker.calls == ["first", "second"]
 
 
 def test_run_retrieval_eval_selects_keyword(monkeypatch, tmp_path: Path) -> None:
@@ -334,3 +437,44 @@ def test_run_retrieval_eval_selects_hybrid_with_german_keyword(monkeypatch, tmp_
     assert report.text_config == "german"
     assert report.hit_rate_at(1) == 1.0
     assert report.to_dict()["retriever"] == "hybrid"
+
+
+def test_run_retrieval_eval_selects_reranker_with_german_keyword(monkeypatch, tmp_path: Path) -> None:
+    suite = tmp_path / "suite.jsonl"
+    suite.write_text(
+        '{"id":"C-1","query":"query","expected_sources":["reranked.md"]}',
+        encoding="utf-8",
+    )
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=Path("knowledge"),
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+
+    def fake_build_search(
+        passed_settings: Settings,
+        retriever: str,
+        text_config: str,
+        verbose: bool,
+    ):
+        assert passed_settings is settings
+        assert retriever == "reranker"
+        assert text_config == "german"
+        assert verbose is False
+        return lambda query, limit: [_result("reranked.md", "Reranked", 0.5)]
+
+    monkeypatch.setattr("knowledge_system.evaluation.build_search", fake_build_search)
+
+    report = run_retrieval_eval(
+        settings,
+        suite,
+        retriever="reranker",
+        text_config="simple",
+        verbose=False,
+    )
+
+    assert report.retriever == "reranker"
+    assert report.text_config == "german"
+    assert report.hit_rate_at(1) == 1.0
+    assert report.to_dict()["retriever"] == "reranker"
