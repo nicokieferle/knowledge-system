@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "Local-first, Git-backed knowledge retrieval prototype"
 requires-python = ">=3.11"
 dependencies = [
+    "mcp>=2,<3",
     "numpy>=1.26,<3",
     "pgvector>=0.3,<1",
     "psycopg[binary]>=3.2,<4",
@@ -22,6 +23,7 @@ dev = [
 
 [project.scripts]
 knowledge = "knowledge_system.cli:main"
+knowledge-mcp = "knowledge_system.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

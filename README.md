@@ -16,23 +16,24 @@ For V0:
 - search uses exact cosine similarity
 - no AI is allowed to write directly to `main`
 
-Later versions can add hybrid retrieval, MCP, proposals, approval/rejection and other source adapters.
+Later versions can add proposals, approval/rejection and other source adapters.
 
 ## Architecture
 
 ```text
-Client / CLI
-        |
-        v
-KnowledgeService
-        |
-        v
-Retrieval + SourceAdapter
-        |
-        v
+CLI --------------------------+
+                              |
+MCP Client -> MCP Server -----+
+                              v
+                     KnowledgeService
+                              |
+                              v
+                  Retrieval + SourceAdapter
+                              |
+                              v
 GitMarkdownSource -> knowledge/*.md (source of truth)
-        |
-        v
+                              |
+                              v
 PostgreSQL + pgvector / full-text indexes (disposable retrieval cache)
 ```
 
@@ -134,6 +135,35 @@ knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?" --mo
 `quality` uses keyword candidates plus the local reranker. `fast` uses PostgreSQL keyword
 search with the German text-search configuration.
 
+## Read-only MCP server
+
+V2 exposes the existing `KnowledgeService` through an official MCP Python SDK v2 server.
+The local stdio entry point is intended to be started by an MCP client:
+
+```bash
+knowledge-mcp
+```
+
+The server exposes exactly two read-only tools:
+
+- `search_knowledge`: searches indexed knowledge in `fast` or `quality` mode
+- `get_document`: reads the canonical original document through its registered source adapter
+
+`search_knowledge` never indexes or writes data. `get_document` accepts logical
+`source_id`/`source_path` values from search results, not arbitrary operating-system paths.
+The server process creates one `KnowledgeService`; the reranker remains lazy and is reused
+after the first `quality` search.
+
+For a protocol-level local smoke test that starts the stdio subprocess and lists its tools:
+
+```bash
+pytest tests/test_mcp_server.py -k stdio
+```
+
+Before a real search smoke test, start and initialize the disposable PostgreSQL index as in
+the quick start. Then call `search_knowledge` and `get_document` from a standard MCP client
+configured to launch the `knowledge-mcp` command.
+
 Machine-readable output:
 
 ```bash
@@ -147,13 +177,12 @@ useful as a local baseline, not as a broad benchmark for general knowledge retri
 Keyword eval currently supports PostgreSQL `german` and `simple` text search configurations;
 `german` is the default because it performs better on the current German-language suite.
 
-## What V0 intentionally does not do
+## What the current system intentionally does not do
 
-- no MCP
 - no ChatGPT integration
 - no automatic knowledge writes
 - no pull-request workflow
 - no HNSW index
 - no journal adapter
 
-These come only after retrieval quality is measurable.
+These remain outside the current read-only local scope.

@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from knowledge_system.config import Settings
 from knowledge_system.search import SearchResult
-from knowledge_system.service import KnowledgeService
+from knowledge_system.service import (
+    KnowledgeIndexUnavailableError,
+    KnowledgeService,
+    UnknownSourceError,
+)
 from knowledge_system.sources import SourceDocument
 
 
@@ -108,6 +113,39 @@ def test_knowledge_service_search_quality_reranks_keyword_top_10(monkeypatch) ->
     assert all(result.retrieval_mode == "quality" for result in results)
 
 
+def test_knowledge_service_reuses_lazy_reranker(monkeypatch) -> None:
+    def fake_keyword_search(settings, query, limit, text_config, verbose):
+        return [_search_result(f"chunk-{query}")]
+
+    created_rerankers: list[FakeReranker] = []
+
+    def fake_reranker_factory(verbose: bool) -> FakeReranker:
+        reranker = FakeReranker()
+        created_rerankers.append(reranker)
+        return reranker
+
+    monkeypatch.setattr("knowledge_system.service.keyword_search", fake_keyword_search)
+    monkeypatch.setattr("knowledge_system.service.LocalReranker", fake_reranker_factory)
+    service = KnowledgeService(_settings(), sources=[FakeSource()], verbose=False)
+
+    service.search("first", mode="quality", limit=5)
+    service.search("second", mode="quality", limit=5)
+
+    assert len(created_rerankers) == 1
+    assert [call[0] for call in created_rerankers[0].calls] == ["first", "second"]
+
+
+def test_knowledge_service_translates_database_failure(monkeypatch) -> None:
+    def fake_keyword_search(settings, query, limit, text_config, verbose):
+        raise psycopg.OperationalError("internal database detail")
+
+    monkeypatch.setattr("knowledge_system.service.keyword_search", fake_keyword_search)
+    service = KnowledgeService(_settings(), sources=[FakeSource()], verbose=False)
+
+    with pytest.raises(KnowledgeIndexUnavailableError, match="Knowledge index is unavailable"):
+        service.search("query", mode="fast")
+
+
 def test_knowledge_service_rejects_unknown_mode() -> None:
     service = KnowledgeService(_settings(), sources=[FakeSource()], verbose=False)
 
@@ -124,6 +162,13 @@ def test_knowledge_service_get_document_reads_original_source() -> None:
     assert source.requests == ["economics/inflation.md"]
     assert document.source_id == "economics-git"
     assert document.content == "# Original\n\nFrom source."
+
+
+def test_knowledge_service_rejects_unknown_source() -> None:
+    service = KnowledgeService(_settings(), sources=[FakeSource()], verbose=False)
+
+    with pytest.raises(UnknownSourceError, match="Unknown source_id"):
+        service.get_document("economics/inflation.md", source_id="missing")
 
 
 def test_knowledge_service_keeps_source_id_in_results(monkeypatch) -> None:

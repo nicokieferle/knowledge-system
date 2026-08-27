@@ -34,10 +34,11 @@
 
 ## V2 — MCP
 
-- [ ] read-only MCP tools
+- [x] read-only MCP tools
+- [x] local stdio transport
 - [ ] secure tunnel / supported ChatGPT client
-- [ ] search_knowledge
-- [ ] get_document
+- [x] search_knowledge
+- [x] get_document
 - [ ] find_related
 
 ## V3 — proposals
