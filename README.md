@@ -23,7 +23,11 @@ Later versions can add proposals, approval/rejection and other source adapters.
 ```text
 CLI --------------------------+
                               |
-MCP Client -> MCP Server -----+
+MCP Client -- stdio ----------+
+MCP Client -- HTTP /mcp ------+
+                              v
+                         MCP Server
+                              |
                               v
                      KnowledgeService
                               |
@@ -144,6 +148,28 @@ The local stdio entry point is intended to be started by an MCP client:
 knowledge-mcp
 ```
 
+`stdio` remains the default transport. To start the same server and tools locally over
+Streamable HTTP in Windows PowerShell:
+
+```powershell
+$env:MCP_TRANSPORT="streamable-http"
+$env:MCP_HOST="127.0.0.1"
+$env:MCP_PORT="8000"
+$env:MCP_PATH="/mcp"
+knowledge-mcp
+```
+
+The local MCP URL is:
+
+```text
+http://127.0.0.1:8000/mcp
+```
+
+The HTTP transport uses the MCP SDK's DNS-rebinding protection. By default only loopback
+Host and Origin values are allowed, and the server binds to `127.0.0.1`. Non-loopback use
+requires an explicitly supplied `TransportSecuritySettings` allowlist. This endpoint has no
+authentication or TLS and is not intended for direct public Internet access.
+
 The server exposes exactly two read-only tools:
 
 - `search_knowledge`: searches indexed knowledge in `fast` or `quality` mode
@@ -154,10 +180,10 @@ The server exposes exactly two read-only tools:
 The server process creates one `KnowledgeService`; the reranker remains lazy and is reused
 after the first `quality` search.
 
-For a protocol-level local smoke test that starts the stdio subprocess and lists its tools:
+For protocol-level local smoke tests covering stdio and Streamable HTTP:
 
 ```bash
-pytest tests/test_mcp_server.py -k stdio
+pytest tests/test_mcp_server.py
 ```
 
 Before a real search smoke test, start and initialize the disposable PostgreSQL index as in

@@ -3,7 +3,11 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+MCPTransport = Literal["stdio", "streamable-http"]
+MCP_TRANSPORTS = {"stdio", "streamable-http"}
 
 
 def _load_dotenv(path: Path = Path(".env")) -> None:
@@ -28,6 +32,14 @@ class Settings:
     knowledge_root: Path
     embedding_model: str
     embedding_dimensions: int
+
+
+@dataclass(frozen=True)
+class MCPServerSettings:
+    transport: MCPTransport
+    host: str
+    port: int
+    path: str
 
 
 def _with_default_connect_timeout(database_url: str, seconds: int = 5) -> str:
@@ -58,4 +70,36 @@ def get_settings() -> Settings:
             "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         ),
         embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "384")),
+    )
+
+
+def get_mcp_server_settings() -> MCPServerSettings:
+    _load_dotenv()
+
+    transport = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+    if transport not in MCP_TRANSPORTS:
+        allowed = ", ".join(sorted(MCP_TRANSPORTS))
+        raise ValueError(f"Unsupported MCP_TRANSPORT `{transport}`. Allowed: {allowed}")
+
+    host = os.getenv("MCP_HOST", "127.0.0.1").strip()
+    if not host:
+        raise ValueError("MCP_HOST must not be empty")
+
+    raw_port = os.getenv("MCP_PORT", "8000").strip()
+    try:
+        port = int(raw_port)
+    except ValueError as exc:
+        raise ValueError("MCP_PORT must be an integer") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("MCP_PORT must be between 1 and 65535")
+
+    path = os.getenv("MCP_PATH", "/mcp").strip()
+    if not path.startswith("/") or path.startswith("//") or "?" in path or "#" in path:
+        raise ValueError("MCP_PATH must be an absolute URL path such as `/mcp`")
+
+    return MCPServerSettings(
+        transport=cast(MCPTransport, transport),
+        host=host,
+        port=port,
+        path=path,
     )

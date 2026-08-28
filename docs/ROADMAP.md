@@ -41,6 +41,15 @@
 - [x] get_document
 - [ ] find_related
 
+## V2.1 — local Streamable HTTP
+
+- [x] keep stdio as the default transport
+- [x] expose the same two read-only tools over Streamable HTTP
+- [x] bind to loopback by default
+- [x] enforce explicit Host/Origin allowlists through MCP transport security
+- [x] verify a real MCP v2 client over local HTTP
+- [ ] deploy to the Debian server
+
 ## V3 — proposals
 
 - [ ] proposal table

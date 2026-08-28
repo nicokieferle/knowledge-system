@@ -6,9 +6,10 @@ from typing import Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 
-from .config import get_settings
+from .config import MCPServerSettings, get_mcp_server_settings, get_settings
 from .service import (
     InvalidSourcePathError,
     KnowledgeIndexUnavailableError,
@@ -22,6 +23,13 @@ from .service import (
 LOGGER = logging.getLogger(__name__)
 MIN_SEARCH_LIMIT = 1
 MAX_SEARCH_LIMIT = 20
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+LOOPBACK_ALLOWED_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+LOOPBACK_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:*",
+    "http://localhost:*",
+    "http://[::1]:*",
+]
 
 
 @dataclass(frozen=True)
@@ -144,9 +152,45 @@ def _to_search_item(result: KnowledgeSearchResult) -> SearchKnowledgeItem:
     )
 
 
+def create_loopback_transport_security(host: str) -> TransportSecuritySettings:
+    if host not in LOOPBACK_HOSTS:
+        raise ValueError(
+            "Non-loopback MCP_HOST requires explicit TransportSecuritySettings with an allowlist"
+        )
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=LOOPBACK_ALLOWED_HOSTS,
+        allowed_origins=LOOPBACK_ALLOWED_ORIGINS,
+    )
+
+
+def run_mcp_server(
+    settings: MCPServerSettings | None = None,
+    service: KnowledgeService | None = None,
+    transport_security: TransportSecuritySettings | None = None,
+) -> None:
+    resolved_settings = settings or get_mcp_server_settings()
+    server = create_mcp_server(service)
+
+    if resolved_settings.transport == "stdio":
+        server.run(transport="stdio")
+        return
+
+    security = transport_security or create_loopback_transport_security(
+        resolved_settings.host
+    )
+    server.run(
+        transport="streamable-http",
+        host=resolved_settings.host,
+        port=resolved_settings.port,
+        streamable_http_path=resolved_settings.path,
+        transport_security=security,
+    )
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    create_mcp_server().run(transport="stdio")
+    run_mcp_server()
 
 
 if __name__ == "__main__":
