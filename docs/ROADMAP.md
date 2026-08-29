@@ -50,6 +50,16 @@
 - [x] verify a real MCP v2 client over local HTTP
 - [ ] deploy to the Debian server
 
+## V2.2 — Debian Docker deployment
+
+- [x] add a non-root CPU container image for the knowledge service
+- [x] add a separate Debian server Compose definition
+- [x] keep the canonical `knowledge/` checkout mounted read-only
+- [x] persist PostgreSQL index data and the Hugging Face model cache
+- [x] publish MCP only on the Debian host loopback interface
+- [x] document explicit initialization, indexing, smoke tests and updates
+- [ ] verify the full lifecycle on the target Debian host
+
 ## V3 — proposals
 
 - [ ] proposal table

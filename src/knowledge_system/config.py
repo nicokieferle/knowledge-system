@@ -40,6 +40,8 @@ class MCPServerSettings:
     host: str
     port: int
     path: str
+    allowed_hosts: tuple[str, ...] = ()
+    allowed_origins: tuple[str, ...] = ()
 
 
 def _with_default_connect_timeout(database_url: str, seconds: int = 5) -> str:
@@ -97,9 +99,23 @@ def get_mcp_server_settings() -> MCPServerSettings:
     if not path.startswith("/") or path.startswith("//") or "?" in path or "#" in path:
         raise ValueError("MCP_PATH must be an absolute URL path such as `/mcp`")
 
+    allowed_hosts = _parse_mcp_allowlist("MCP_ALLOWED_HOSTS")
+    allowed_origins = _parse_mcp_allowlist("MCP_ALLOWED_ORIGINS")
+    if allowed_origins and not allowed_hosts:
+        raise ValueError("MCP_ALLOWED_ORIGINS requires MCP_ALLOWED_HOSTS")
+
     return MCPServerSettings(
         transport=cast(MCPTransport, transport),
         host=host,
         port=port,
         path=path,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
     )
+
+
+def _parse_mcp_allowlist(name: str) -> tuple[str, ...]:
+    values = tuple(value.strip() for value in os.getenv(name, "").split(",") if value.strip())
+    if any("*" in value for value in values):
+        raise ValueError(f"{name} must not contain wildcards")
+    return values

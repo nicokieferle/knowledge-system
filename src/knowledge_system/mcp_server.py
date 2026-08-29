@@ -24,12 +24,6 @@ LOGGER = logging.getLogger(__name__)
 MIN_SEARCH_LIMIT = 1
 MAX_SEARCH_LIMIT = 20
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
-LOOPBACK_ALLOWED_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
-LOOPBACK_ALLOWED_ORIGINS = [
-    "http://127.0.0.1:*",
-    "http://localhost:*",
-    "http://[::1]:*",
-]
 
 
 @dataclass(frozen=True)
@@ -152,15 +146,39 @@ def _to_search_item(result: KnowledgeSearchResult) -> SearchKnowledgeItem:
     )
 
 
-def create_loopback_transport_security(host: str) -> TransportSecuritySettings:
+def create_loopback_transport_security(
+    host: str,
+    port: int,
+) -> TransportSecuritySettings:
     if host not in LOOPBACK_HOSTS:
         raise ValueError(
             "Non-loopback MCP_HOST requires explicit TransportSecuritySettings with an allowlist"
         )
     return TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=LOOPBACK_ALLOWED_HOSTS,
-        allowed_origins=LOOPBACK_ALLOWED_ORIGINS,
+        allowed_hosts=[
+            f"127.0.0.1:{port}",
+            f"localhost:{port}",
+            f"[::1]:{port}",
+        ],
+        allowed_origins=[
+            f"http://127.0.0.1:{port}",
+            f"http://localhost:{port}",
+            f"http://[::1]:{port}",
+        ],
+    )
+
+
+def create_transport_security(
+    settings: MCPServerSettings,
+) -> TransportSecuritySettings:
+    if not settings.allowed_hosts:
+        return create_loopback_transport_security(settings.host, settings.port)
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(settings.allowed_hosts),
+        allowed_origins=list(settings.allowed_origins),
     )
 
 
@@ -176,9 +194,7 @@ def run_mcp_server(
         server.run(transport="stdio")
         return
 
-    security = transport_security or create_loopback_transport_security(
-        resolved_settings.host
-    )
+    security = transport_security or create_transport_security(resolved_settings)
     server.run(
         transport="streamable-http",
         host=resolved_settings.host,

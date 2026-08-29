@@ -167,8 +167,8 @@ http://127.0.0.1:8000/mcp
 
 The HTTP transport uses the MCP SDK's DNS-rebinding protection. By default only loopback
 Host and Origin values are allowed, and the server binds to `127.0.0.1`. Non-loopback use
-requires an explicitly supplied `TransportSecuritySettings` allowlist. This endpoint has no
-authentication or TLS and is not intended for direct public Internet access.
+requires an explicitly configured allowlist or supplied `TransportSecuritySettings`. This
+endpoint has no authentication or TLS and is not intended for direct public Internet access.
 
 The server exposes exactly two read-only tools:
 
@@ -189,6 +189,19 @@ pytest tests/test_mcp_server.py
 Before a real search smoke test, start and initialize the disposable PostgreSQL index as in
 the quick start. Then call `search_knowledge` and `get_document` from a standard MCP client
 configured to launch the `knowledge-mcp` command.
+
+## Debian Docker deployment
+
+V2.2 provides a separate [server Compose file](compose.server.yml) so the existing
+PostgreSQL-only Windows development workflow remains unchanged. The server deployment runs
+PostgreSQL and the read-only MCP service as containers, mounts `knowledge/` read-only from
+the checkout, and persists both PostgreSQL data and the Hugging Face model cache.
+
+The MCP process listens on `0.0.0.0:8000` inside its container, while Docker publishes it
+only as `127.0.0.1:8000` on the Debian host. It is not configured for public access.
+
+The complete first-install, smoke-test, restart, persistence and update procedure is in
+[docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md).
 
 Machine-readable output:
 

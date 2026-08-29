@@ -28,6 +28,7 @@ from knowledge_system.config import (
 from knowledge_system.mcp_server import (
     create_loopback_transport_security,
     create_mcp_server,
+    create_transport_security,
     run_mcp_server,
 )
 from knowledge_system.search import SearchResult
@@ -132,7 +133,7 @@ def _running_http_server(
     app = server.streamable_http_app(
         streamable_http_path=path,
         host=host,
-        transport_security=create_loopback_transport_security(host),
+        transport_security=create_loopback_transport_security(host, port),
     )
     uvicorn_server = uvicorn.Server(
         uvicorn.Config(
@@ -197,7 +198,14 @@ def test_mcp_server_settings_default_to_stdio_and_local_http(
     tmp_path: Path,
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    for name in ("MCP_TRANSPORT", "MCP_HOST", "MCP_PORT", "MCP_PATH"):
+    for name in (
+        "MCP_TRANSPORT",
+        "MCP_HOST",
+        "MCP_PORT",
+        "MCP_PATH",
+        "MCP_ALLOWED_HOSTS",
+        "MCP_ALLOWED_ORIGINS",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     settings = get_mcp_server_settings()
@@ -207,6 +215,8 @@ def test_mcp_server_settings_default_to_stdio_and_local_http(
         host="127.0.0.1",
         port=8000,
         path="/mcp",
+        allowed_hosts=(),
+        allowed_origins=(),
     )
 
 
@@ -227,6 +237,30 @@ def test_mcp_server_settings_read_streamable_http_environment(monkeypatch, tmp_p
     )
 
 
+def test_mcp_server_settings_read_explicit_transport_allowlists(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MCP_HOST", "0.0.0.0")
+    monkeypatch.setenv(
+        "MCP_ALLOWED_HOSTS",
+        "127.0.0.1:8000, localhost:8000",
+    )
+    monkeypatch.setenv(
+        "MCP_ALLOWED_ORIGINS",
+        "http://127.0.0.1:8000, http://localhost:8000",
+    )
+
+    settings = get_mcp_server_settings()
+
+    assert settings.allowed_hosts == ("127.0.0.1:8000", "localhost:8000")
+    assert settings.allowed_origins == (
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+    )
+
+
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
@@ -234,6 +268,8 @@ def test_mcp_server_settings_read_streamable_http_environment(monkeypatch, tmp_p
         ("MCP_PORT", "invalid", "MCP_PORT must be an integer"),
         ("MCP_PORT", "70000", "MCP_PORT must be between"),
         ("MCP_PATH", "mcp", "MCP_PATH must be an absolute URL path"),
+        ("MCP_ALLOWED_HOSTS", "127.0.0.1:*", "must not contain wildcards"),
+        ("MCP_ALLOWED_ORIGINS", "http://localhost:*", "must not contain wildcards"),
     ],
 )
 def test_mcp_server_settings_reject_invalid_values(
@@ -247,6 +283,18 @@ def test_mcp_server_settings_reject_invalid_values(
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValueError, match=message):
+        get_mcp_server_settings()
+
+
+def test_mcp_server_settings_reject_origins_without_hosts(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MCP_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("MCP_ALLOWED_ORIGINS", "http://127.0.0.1:8000")
+
+    with pytest.raises(ValueError, match="requires MCP_ALLOWED_HOSTS"):
         get_mcp_server_settings()
 
 
@@ -300,7 +348,8 @@ def test_run_mcp_server_passes_http_options_and_security(monkeypatch) -> None:
     assert options["streamable_http_path"] == "/knowledge"
     assert isinstance(security, TransportSecuritySettings)
     assert security.enable_dns_rebinding_protection is True
-    assert "127.0.0.1:*" in security.allowed_hosts
+    assert "127.0.0.1:8123" in security.allowed_hosts
+    assert not any("*" in host for host in security.allowed_hosts)
     assert "evil.example" not in security.allowed_hosts
 
 
@@ -350,6 +399,37 @@ def test_non_loopback_host_accepts_explicit_allowlist(monkeypatch) -> None:
     run_mcp_server(settings, transport_security=security)
 
     assert server.options["transport_security"] is security
+
+
+def test_non_loopback_host_accepts_configured_allowlist(monkeypatch) -> None:
+    class FakeServer:
+        def __init__(self) -> None:
+            self.options: dict[str, object] = {}
+
+        def run(self, transport: str, **kwargs: object) -> None:
+            assert transport == "streamable-http"
+            self.options = kwargs
+
+    server = FakeServer()
+    monkeypatch.setattr("knowledge_system.mcp_server.create_mcp_server", lambda service: server)
+    settings = MCPServerSettings(
+        transport="streamable-http",
+        host="0.0.0.0",
+        port=8000,
+        path="/mcp",
+        allowed_hosts=("127.0.0.1:8000", "localhost:8000"),
+        allowed_origins=(
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+        ),
+    )
+
+    run_mcp_server(settings)
+
+    security = server.options["transport_security"]
+    assert isinstance(security, TransportSecuritySettings)
+    assert security == create_transport_security(settings)
+    assert security.allowed_hosts == ["127.0.0.1:8000", "localhost:8000"]
 
 
 def test_search_knowledge_schema_and_structured_fast_quality_results() -> None:
