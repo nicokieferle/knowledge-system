@@ -293,7 +293,7 @@ def run_smoke(settings: Settings) -> dict[str, object]:
     assert final_counts == {
         "conversations": 3,
         "messages": 26,
-        "conversation_summaries": 2,
+        "conversation_summaries": 3,
         "proposal_suggestions": 2,
         "proposals": 4,
     }

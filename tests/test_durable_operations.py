@@ -67,3 +67,4 @@ def test_real_postgres_smoke_has_explicit_destructive_target_guard() -> None:
     assert "source_suggestion_id" in smoke
     assert "ThreadPoolExecutor" in smoke
     assert "knowledge_unchanged" in smoke
+    assert '"conversation_summaries": 3' in smoke
