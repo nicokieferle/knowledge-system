@@ -191,6 +191,8 @@ Conversation history, summaries, proposal suggestions and proposals share Postgr
 the retrieval index, but they are **durable, backup-relevant application data**. Only the
 `chunks` and `index_metadata` tables are disposable. `knowledge index` never modifies the
 durable tables, and `knowledge init-db` creates them additively without resetting their data.
+Manual `pg_dump`/`pg_restore` recovery and the isolated PostgreSQL verification procedure are
+documented in [docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md#durable-state-backup).
 
 For protocol-level local smoke tests covering stdio and Streamable HTTP:
 

@@ -32,3 +32,16 @@ def test_server_image_is_non_root_cpu_only_and_does_not_copy_environment() -> No
     assert "COPY .env" not in dockerfile
     assert ".env" in dockerignore
     assert "knowledge" in dockerignore
+
+
+def test_debian_documentation_has_durable_backup_and_defensive_restore_commands() -> None:
+    deployment = (PROJECT_ROOT / "docs" / "DEPLOYMENT_DEBIAN.md").read_text(encoding="utf-8")
+
+    assert "bash scripts/backup_durable_state.sh" in deployment
+    assert "pg_restore --list" in deployment
+    assert "bash scripts/restore_durable_state.sh" in deployment
+    assert "durable_state_fingerprint.py" in deployment
+    assert "does not restore directly into the configured production database" in deployment
+    assert "and any non-empty target" in deployment
+    assert "Do not use `docker compose ... down -v`" in deployment
+    assert "/data/knowledgesystem/backups" in deployment

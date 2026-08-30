@@ -164,6 +164,118 @@ conversations, messages, summaries, suggestions and proposals. Back up that volu
 destructive maintenance. Canonical Markdown remains in the Git checkout, while only the
 retrieval tables and model cache can be recreated from source.
 
+## Durable state backup
+
+PostgreSQL contains two operationally different data classes:
+
+- Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
+- Non-rebuildable: `conversations`, `messages`, `conversation_summaries`,
+  `proposal_suggestions` and `proposals`.
+
+The scripts use the PostgreSQL 17 `pg_dump` and `pg_restore` binaries already present in the
+PostgreSQL container. They never put the database password on the command line. The durable
+table allowlist is maintained once in `scripts/durable_tables.sh`.
+
+Create the host backup directory with restrictive permissions. The operator running Docker
+must be able to write there:
+
+```bash
+sudo install -d -m 0700 -o "$USER" -g "$USER" /data/knowledgesystem/backups
+```
+
+Create a timestamped custom-format, data-only archive:
+
+```bash
+BACKUP_DIR=/data/knowledgesystem/backups \
+  bash scripts/backup_durable_state.sh
+```
+
+The script uses `.env.server` and `compose.server.yml` by default, writes through a restrictive
+temporary file, checks that `pg_dump` succeeded and prints `backup_file`, `backup_bytes` and
+`backup_format`. It refuses `/data/knowledgesystem/postgres` as a backup target.
+
+Inspect an archive without restoring or printing conversation contents:
+
+```bash
+BACKUP=/data/knowledgesystem/backups/durable-state-YYYYMMDDTHHMMSSZ-ID.dump
+docker compose --env-file .env.server -f compose.server.yml exec -T postgres \
+  pg_restore --list < "$BACKUP"
+```
+
+Archives contain private conversation and proposal data. Keep the directory non-public,
+restrict copies to trusted operators and never commit `.dump` files.
+
+### Restore rehearsal in a fresh database
+
+V3.0 deliberately does not restore directly into the configured production database. Create
+a separate database in the same PostgreSQL instance, initialize its schema and then restore:
+
+```bash
+export RESTORE_DB="knowledge_restore_$(date -u +%Y%m%dT%H%M%SZ)"
+
+docker compose --env-file .env.server -f compose.server.yml exec -T postgres \
+  sh -eu -c 'exec createdb --username="$POSTGRES_USER" "$1"' \
+  create-restore-db "$RESTORE_DB"
+
+docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp \
+  sh -eu -c 'export DATABASE_URL="${DATABASE_URL%/*}/$1"; exec knowledge init-db' \
+  restore-init "$RESTORE_DB"
+
+RESTORE_DATABASE="$RESTORE_DB" \
+  bash scripts/restore_durable_state.sh "$BACKUP"
+```
+
+The restore script requires all durable tables to exist and contain zero rows. It refuses the
+configured production database and any non-empty target. It does not use `--clean`, `DROP` or
+`TRUNCATE`. A second invocation against the restored database must fail without changing data.
+
+Compare source and restored state without printing message, summary or proposal text:
+
+```bash
+docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp \
+  python /app/scripts/durable_state_fingerprint.py
+
+docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp \
+  sh -eu -c 'export DATABASE_URL="${DATABASE_URL%/*}/$1"; \
+    exec python /app/scripts/durable_state_fingerprint.py' \
+  restore-verify "$RESTORE_DB"
+```
+
+Both commands must report identical counts and `durable_state_sha256`. The fingerprint covers
+IDs, statuses, foreign-key relationships, summary boundaries, suggestion links and hashed
+private fields. It never prints the private field values. Verify all five table counts, the
+fingerprint, a successful reconnect and the refusal of a second restore before considering a
+backup recoverable.
+
+## Isolated V3.0 PostgreSQL recovery smoke
+
+The repeatable smoke uses `pgvector/pgvector:0.8.6-pg17-bookworm`, a unique Compose project,
+one project-scoped PostgreSQL volume, no published ports and a read-only `knowledge/` mount.
+It tests real persistence, summary compare-and-set, proposal idempotency, concurrent suggestion
+confirmation, backup, restore into a second database and defensive refusal. It never references
+`/data/knowledgesystem/postgres` or the production Compose project.
+
+Run it from an isolated checkout or Git worktree:
+
+```bash
+bash scripts/run_v30_postgres_recovery_smoke.sh
+```
+
+The script generates an in-memory random test password, builds a feature-branch image, removes
+only its explicitly named Compose project, volume, image and `/tmp/knowledge-v30-smoke.*`
+directory on exit, and reports whether production resources were touched. Do not replace its
+project-name and path guards with broad Docker cleanup commands.
+
+For an already provisioned isolated database, the pytest wrapper is opt-in:
+
+```bash
+TEST_DATABASE_URL='postgresql://test-user:test-password@test-host/knowledge_v30_test' \
+V30_SMOKE_CONFIRM=isolated-v30-smoke-database \
+pytest tests/integration/test_conversation_postgres.py -q
+```
+
+Without `TEST_DATABASE_URL`, normal `pytest` skips this one real-database test.
+
 ## Logs and stop
 
 ```bash
