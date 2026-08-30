@@ -82,3 +82,15 @@ def test_indexer_uses_source_adapter(monkeypatch, capsys) -> None:
         "DELETE FROM chunks WHERE source_id" in sql and params[0] == "test-source"
         for sql, params in fake_conn.calls
     )
+    durable_tables = (
+        "conversations",
+        "messages",
+        "conversation_summaries",
+        "proposal_suggestions",
+        "proposals",
+    )
+    assert all(
+        durable_table not in sql.lower()
+        for sql, _ in fake_conn.calls
+        for durable_table in durable_tables
+    )

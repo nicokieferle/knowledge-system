@@ -13,8 +13,9 @@ def test_server_compose_preserves_local_only_and_persistent_boundaries() -> None
     assert "source: ./knowledge" in compose
     assert "target: /app/knowledge" in compose
     assert "read_only: true" in compose
-    assert "knowledge_pgdata:/var/lib/postgresql/data" in compose
-    assert "knowledge_hf_cache:/home/knowledge/.cache/huggingface" in compose
+    assert "/data/knowledgesystem/postgres:/var/lib/postgresql/data" in compose
+    assert "source: /data/knowledgesystem/huggingface" in compose
+    assert "target: /home/knowledge/.cache/huggingface" in compose
     assert "POSTGRES_PASSWORD: knowledge" not in compose
     assert "8000:8000" not in compose
 

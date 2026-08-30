@@ -1,7 +1,8 @@
 # Debian 12 Docker deployment
 
-This deployment keeps `knowledge/` as the canonical source and PostgreSQL as a disposable,
-rebuildable retrieval index. It exposes the MCP endpoint only on the Debian host loopback
+This deployment keeps `knowledge/` as the canonical knowledge source. PostgreSQL contains a
+disposable, rebuildable retrieval index and, from V3.0 onward, may also contain durable
+conversation and proposal state. It exposes the MCP endpoint only on the Debian host loopback
 interface. It does not provide TLS, authentication or public network access.
 
 ## Architecture
@@ -157,9 +158,11 @@ docker compose --env-file .env.server -f compose.server.yml up -d
 docker compose --env-file .env.server -f compose.server.yml ps
 ```
 
-Named volumes survive `down`. `docker compose ... down -v` intentionally deletes both the
-rebuildable PostgreSQL index and the model cache. Canonical Markdown remains in the Git
-checkout and is not affected.
+Named volumes survive `down`. Do not use `docker compose ... down -v` after V3 conversation
+features hold real data: it deletes the PostgreSQL volume, including non-rebuildable
+conversations, messages, summaries, suggestions and proposals. Back up that volume before
+destructive maintenance. Canonical Markdown remains in the Git checkout, while only the
+retrieval tables and model cache can be recreated from source.
 
 ## Logs and stop
 

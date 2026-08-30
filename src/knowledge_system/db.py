@@ -7,6 +7,7 @@ import psycopg
 from pgvector.psycopg import register_vector
 
 from .config import Settings
+from .conversation_schema import init_conversation_schema
 
 
 @contextmanager
@@ -105,5 +106,9 @@ def init_db(settings: Settings) -> None:
             SET value = EXCLUDED.value, updated_at = now()
             """
         )
+
+        # Conversation history and proposals are durable application data. Their
+        # additive schema is deliberately separate from the rebuildable chunk index.
+        init_conversation_schema(conn)
 
     print("[db] Database ready")
