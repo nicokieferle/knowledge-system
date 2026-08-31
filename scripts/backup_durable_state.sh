@@ -15,7 +15,7 @@ fi
 
 cd "${PROJECT_ROOT}"
 configure_compose_command
-durable_table_args
+durable_pg_dump_table_args
 command -v docker >/dev/null || {
   printf 'docker is required\n' >&2
   exit 2
@@ -37,7 +37,7 @@ chmod 0600 "${temporary_file}"
   --data-only \
   --no-owner \
   --no-privileges \
-  "${DURABLE_TABLE_ARGS[@]}" >"${temporary_file}"
+  "${DURABLE_PG_DUMP_TABLE_ARGS[@]}" >"${temporary_file}"
 
 [[ -s "${temporary_file}" ]] || {
   printf 'pg_dump produced an empty archive\n' >&2

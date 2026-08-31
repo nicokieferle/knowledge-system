@@ -19,7 +19,7 @@ fi
 
 cd "${PROJECT_ROOT}"
 configure_compose_command
-durable_table_args
+durable_pg_restore_filter_args
 
 # Production restore is intentionally unsupported in V3.0. Recovery must target a
 # separately created database which can be verified before any controlled cutover.
@@ -53,7 +53,7 @@ fi
 "${COMPOSE_COMMAND[@]}" exec -T postgres sh -eu -c \
   'database=$1; shift; exec pg_restore --username="$POSTGRES_USER" --dbname="$database" \
     --data-only --no-owner --no-privileges --single-transaction --exit-on-error "$@"' \
-  restore-data "${RESTORE_DATABASE}" "${DURABLE_TABLE_ARGS[@]}" <"${backup_file}"
+  restore-data "${RESTORE_DATABASE}" "${DURABLE_PG_RESTORE_FILTER_ARGS[@]}" <"${backup_file}"
 
 sequence_sql="
   SELECT setval(

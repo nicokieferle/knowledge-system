@@ -28,6 +28,21 @@ def test_backup_uses_restrictive_custom_format_and_shared_table_allowlist() -> N
     assert "POSTGRES_PASSWORD" not in backup
 
 
+def test_dump_and_restore_use_their_distinct_table_filter_syntax() -> None:
+    common = (SCRIPTS / "durable_tables.sh").read_text(encoding="utf-8")
+    backup = (SCRIPTS / "backup_durable_state.sh").read_text(encoding="utf-8")
+    restore = (SCRIPTS / "restore_durable_state.sh").read_text(encoding="utf-8")
+
+    assert 'DURABLE_PG_DUMP_TABLE_ARGS+=("--table=public.${table}")' in common
+    assert 'DURABLE_PG_RESTORE_FILTER_ARGS=("--schema=public")' in common
+    assert 'DURABLE_PG_RESTORE_FILTER_ARGS+=("--table=${table}")' in common
+    assert "durable_pg_dump_table_args" in backup
+    assert '"${DURABLE_PG_DUMP_TABLE_ARGS[@]}"' in backup
+    assert "durable_pg_restore_filter_args" in restore
+    assert '"${DURABLE_PG_RESTORE_FILTER_ARGS[@]}"' in restore
+    assert 'DURABLE_PG_RESTORE_FILTER_ARGS+=("--table=public.${table}")' not in common
+
+
 def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     restore = (SCRIPTS / "restore_durable_state.sh").read_text(encoding="utf-8")
 

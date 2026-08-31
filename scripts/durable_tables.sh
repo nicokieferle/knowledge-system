@@ -31,11 +31,21 @@ configure_compose_command() {
   COMPOSE_COMMAND+=(-f "${COMPOSE_FILE}")
 }
 
-durable_table_args() {
-  DURABLE_TABLE_ARGS=()
+durable_pg_dump_table_args() {
+  DURABLE_PG_DUMP_TABLE_ARGS=()
   local table
   for table in "${DURABLE_TABLES[@]}"; do
-    DURABLE_TABLE_ARGS+=("--table=public.${table}")
+    DURABLE_PG_DUMP_TABLE_ARGS+=("--table=public.${table}")
+  done
+}
+
+durable_pg_restore_filter_args() {
+  # pg_restore table patterns are not schema-qualified. Pair unqualified table
+  # names with an explicit schema filter to preserve the durable allowlist.
+  DURABLE_PG_RESTORE_FILTER_ARGS=("--schema=public")
+  local table
+  for table in "${DURABLE_TABLES[@]}"; do
+    DURABLE_PG_RESTORE_FILTER_ARGS+=("--table=${table}")
   done
 }
 
