@@ -58,7 +58,7 @@
 - [x] persist PostgreSQL index data and the Hugging Face model cache
 - [x] publish MCP only on the Debian host loopback interface
 - [x] document explicit initialization, indexing, smoke tests and updates
-- [ ] verify the full lifecycle on the target Debian host
+- [x] verify the full lifecycle on the target Debian host
 
 ## V3.0 — conversation + memory core
 
@@ -68,12 +68,12 @@
 - [x] direct and semantic proposal intent
 - [x] persistent proposal suggestions with atomic, idempotent confirmation
 - [x] pending proposal records without knowledge or Git writes
+- [x] durable-state backup and isolated restore verification on the Debian target host
 
 ## V3.1 — client and LLM integration
 
 - [ ] implement one real LLM provider behind the existing protocols
 - [ ] add a Telegram adapter as a client of ConversationService
-- [ ] add operational backup and restore for durable conversation data
 
 ## V3.2 — proposal review
 

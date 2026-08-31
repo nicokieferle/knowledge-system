@@ -276,6 +276,24 @@ pytest tests/integration/test_conversation_postgres.py -q
 
 Without `TEST_DATABASE_URL`, normal `pytest` skips this one real-database test.
 
+### Verified target-host recovery rehearsal
+
+The full V3.0 lifecycle was verified on the Debian target host on 2026-08-31 from an
+isolated worktree at commit `5b53413`. The test used a separate Compose project, an
+unpublished PostgreSQL 17 + pgvector container and a project-scoped volume. It confirmed:
+
+- durable conversation, message, summary, suggestion and proposal persistence;
+- atomic and idempotent suggestion confirmation plus concurrent update handling;
+- a custom-format backup containing only the five durable tables and message sequence;
+- an identical source/restore fingerprint after restore into a fresh second database;
+- refusal of a repeated restore into the non-empty target without changing its fingerprint;
+- identical source/restore message sequence state; and
+- continued health of the production MCP and PostgreSQL containers throughout the test.
+
+The production checkout remained on `main`, `/data/knowledgesystem/postgres` was not used by
+the smoke project, and the test container, network, volume, image, backup, secret file and
+worktree were removed after verification.
+
 ## Logs and stop
 
 ```bash
