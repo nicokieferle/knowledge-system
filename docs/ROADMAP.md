@@ -58,17 +58,35 @@
 - [x] persist PostgreSQL index data and the Hugging Face model cache
 - [x] publish MCP only on the Debian host loopback interface
 - [x] document explicit initialization, indexing, smoke tests and updates
-- [ ] verify the full lifecycle on the target Debian host
+- [x] verify the full lifecycle on the target Debian host
 
-## V3 — proposals
+## V3.0 — conversation + memory core
 
-- [ ] proposal table
-- [ ] proposed / accepted / rejected / deferred
-- [ ] Git branch generation
+- [x] durable conversations and raw messages
+- [x] recent-message context and rolling summaries with explicit boundaries
+- [x] provider-neutral chat, summarizer, intent and proposal-generator protocols
+- [x] direct and semantic proposal intent
+- [x] persistent proposal suggestions with atomic, idempotent confirmation
+- [x] pending proposal records without knowledge or Git writes
+- [x] durable-state backup and isolated restore verification on the Debian target host
+
+## V3.1 — client and LLM integration
+
+- [ ] implement one real LLM provider behind the existing protocols
+- [ ] add a Telegram adapter as a client of ConversationService
+
+## V3.2 — proposal review
+
+- [ ] proposed / accepted / rejected / deferred lifecycle
 - [ ] diff preview
 - [ ] stale-base detection
-- [ ] approve/reject operations
-- [ ] reindex after merge
+- [ ] explicit approve/reject operations
+
+## V3.3 — safe Git apply
+
+- [ ] isolated Git branch generation
+- [ ] guarded canonical knowledge writes after approval
+- [ ] reindex after reviewed merge
 
 ## V4 — additional sources
 

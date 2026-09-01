@@ -4,7 +4,7 @@ Local-first prototype for a long-term personal knowledge base.
 
 ## Core rule
 
-**Original data is the source of truth. The vector database is a disposable index.**
+**Original knowledge is the source of truth. Retrieval tables are a disposable index.**
 
 For V0:
 
@@ -38,7 +38,7 @@ MCP Client -- HTTP /mcp ------+
 GitMarkdownSource -> knowledge/*.md (source of truth)
                               |
                               v
-PostgreSQL + pgvector / full-text indexes (disposable retrieval cache)
+PostgreSQL chunks + vector/full-text indexes (disposable retrieval cache)
 ```
 
 Indexing still derives everything from source documents:
@@ -180,14 +180,28 @@ The server exposes exactly two read-only tools:
 The server process creates one `KnowledgeService`; the reranker remains lazy and is reused
 after the first `quality` search.
 
+## Conversation core
+
+V3.0 adds a provider- and client-independent conversation core with persistent messages,
+rolling summaries, proposal intent handling and pending proposals. It has no real LLM or
+messenger provider yet and cannot write canonical knowledge. See
+[docs/conversation-architecture.md](docs/conversation-architecture.md).
+
+Conversation history, summaries, proposal suggestions and proposals share PostgreSQL with
+the retrieval index, but they are **durable, backup-relevant application data**. Only the
+`chunks` and `index_metadata` tables are disposable. `knowledge index` never modifies the
+durable tables, and `knowledge init-db` creates them additively without resetting their data.
+Manual `pg_dump`/`pg_restore` recovery and the isolated PostgreSQL verification procedure are
+documented in [docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md#durable-state-backup).
+
 For protocol-level local smoke tests covering stdio and Streamable HTTP:
 
 ```bash
 pytest tests/test_mcp_server.py
 ```
 
-Before a real search smoke test, start and initialize the disposable PostgreSQL index as in
-the quick start. Then call `search_knowledge` and `get_document` from a standard MCP client
+Before a real search smoke test, start and initialize the PostgreSQL schema and disposable
+retrieval index as in the quick start. Then call `search_knowledge` and `get_document` from a standard MCP client
 configured to launch the `knowledge-mcp` command.
 
 ## Debian Docker deployment

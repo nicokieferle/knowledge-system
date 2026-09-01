@@ -21,6 +21,7 @@ RUN pip install --no-cache-dir --index-url "${PYTORCH_INDEX_URL}" torch \
     && groupadd --gid 10001 knowledge \
     && useradd --uid 10001 --gid knowledge --create-home --no-log-init knowledge \
     && mkdir -p /app/knowledge /home/knowledge/.cache/huggingface \
+    && chmod -R a+rX /app/src /app/scripts \
     && chown -R knowledge:knowledge /app/knowledge /home/knowledge
 
 USER knowledge
