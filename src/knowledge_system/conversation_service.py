@@ -20,6 +20,7 @@ from .conversation_models import (
 )
 from .conversation_store import ConversationStore
 from .proposal_service import ProposalService
+from .proposal_store import ProposalSuggestionStateError
 
 EXPLICIT_PROPOSAL_COMMANDS = frozenset({"/remember", "/propose"})
 SUGGESTION_CONFIRMATION_TEXT = (
@@ -184,6 +185,7 @@ class ConversationService:
             external_message_id,
             {"proposal_suggestion_id": str(suggestion_id), "control": "confirm"},
         )
+        self._validate_resolution_message(confirmation, suggestion_id, "confirm")
         originating_ids = tuple(
             dict.fromkeys((*suggestion.originating_message_ids, suggestion.trigger_message_id))
         )
@@ -223,6 +225,7 @@ class ConversationService:
             external_message_id,
             {"proposal_suggestion_id": str(suggestion_id), "control": "reject"},
         )
+        self._validate_resolution_message(rejection, suggestion_id, "reject")
         self.proposal_service.reject_suggestion(
             conversation_id=conversation_id,
             suggestion_id=suggestion_id,
@@ -256,3 +259,17 @@ class ConversationService:
                 limit=self.retrieval_policy.limit,
             )
         )
+
+    @staticmethod
+    def _validate_resolution_message(
+        message: Message,
+        suggestion_id: UUID,
+        control: str,
+    ) -> None:
+        if (
+            message.metadata.get("proposal_suggestion_id") != str(suggestion_id)
+            or message.metadata.get("control") != control
+        ):
+            raise ProposalSuggestionStateError(
+                "External message is already linked to another proposal action"
+            )

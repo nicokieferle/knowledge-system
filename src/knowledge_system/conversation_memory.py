@@ -6,6 +6,7 @@ from uuid import UUID
 from .conversation_models import (
     ConversationContext,
     ConversationSummarizer,
+    ConversationSummary,
     KnowledgeResult,
     Message,
 )
@@ -51,6 +52,11 @@ class ConversationMemory:
             conversation_id,
             before_message_id=before_message_id,
         )
+        if summary_state is not None and summary_state.through_message_id >= before_message_id:
+            # A later worker may have advanced the shared rolling summary past this
+            # request's immutable boundary. Raw history is the only safe context for
+            # this older snapshot because prior summary versions are not retained.
+            summary_state = None
         through_message_id = summary_state.through_message_id if summary_state else None
         recent = self.store.list_messages(
             conversation_id,
@@ -67,7 +73,7 @@ class ConversationMemory:
         conversation_id: UUID,
         *,
         before_message_id: int,
-    ):
+    ) -> ConversationSummary | None:
         previous = self.store.get_summary(conversation_id)
         unsummarized = self.store.list_messages(
             conversation_id,

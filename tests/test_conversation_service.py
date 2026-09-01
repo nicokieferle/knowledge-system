@@ -261,7 +261,7 @@ def test_rejection_creates_no_proposal_and_cross_conversation_resolution_is_reje
 
 
 def test_one_confirmation_message_cannot_confirm_two_suggestions() -> None:
-    service, _, proposals, classifier, _, _, _, _ = _service(
+    service, _, proposals, classifier, _, generator, _, _ = _service(
         intent=ConversationIntent.SUGGEST_PROPOSAL
     )
     conversation = service.create_conversation("api")
@@ -284,6 +284,7 @@ def test_one_confirmation_message_cannot_confirm_two_suggestions() -> None:
         )
 
     assert len(proposals.state.proposals) == 1
+    assert len(generator.contexts) == 1
     assert proposals.get_suggestion(
         conversation.id, second.pending_action_id
     ).status is SuggestionStatus.PENDING

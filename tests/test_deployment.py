@@ -27,6 +27,7 @@ def test_server_image_is_non_root_cpu_only_and_does_not_copy_environment() -> No
     assert dockerfile.startswith("FROM python:3.12-slim-bookworm")
     assert "https://download.pytorch.org/whl/cpu" in dockerfile
     assert "USER knowledge" in dockerfile
+    assert "chmod -R a+rX /app/src /app/scripts" in dockerfile
     assert 'CMD ["knowledge-mcp"]' in dockerfile
     assert "COPY . ." not in dockerfile
     assert "COPY .env" not in dockerfile

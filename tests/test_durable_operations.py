@@ -67,7 +67,10 @@ def test_smoke_compose_is_isolated_from_production_resources() -> None:
     assert "postgres_data:/var/lib/postgresql/data" in compose
     assert "read_only: true" in compose
     assert "knowledge-v30-smoke-" in runner
-    assert "down --volumes --remove-orphans --rmi local" in runner
+    assert "down --volumes --remove-orphans" in runner
+    assert '== knowledge-system-v30-smoke:*' in runner
+    assert 'docker image rm "${SMOKE_IMAGE_NAME}"' in runner
+    assert "--rmi local" not in runner
     assert "docker system prune" not in runner
     assert "compose.server.yml" not in runner
     assert "production_compose_touched=false" in runner

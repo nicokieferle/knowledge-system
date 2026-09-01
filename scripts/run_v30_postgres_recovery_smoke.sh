@@ -21,7 +21,12 @@ cleanup() {
     printf 'Refusing cleanup for unexpected Compose project\n' >&2
     exit 1
   fi
-  "${compose[@]}" down --volumes --remove-orphans --rmi local >/dev/null 2>&1 || true
+  "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  if [[ "${SMOKE_IMAGE_NAME}" == knowledge-system-v30-smoke:* ]]; then
+    docker image rm "${SMOKE_IMAGE_NAME}" >/dev/null 2>&1 || true
+  else
+    printf 'Refusing cleanup for unexpected smoke image: %s\n' "${SMOKE_IMAGE_NAME}" >&2
+  fi
   if [[ "${temporary_root}" == /tmp/knowledge-v30-smoke.* ]]; then
     rm -rf -- "${temporary_root}"
   else

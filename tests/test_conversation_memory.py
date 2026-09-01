@@ -87,6 +87,36 @@ def test_summary_cas_keeps_concurrent_winner() -> None:
     assert store.get_summary(conversation.id).version == 1  # type: ignore[union-attr]
 
 
+def test_summary_newer_than_request_snapshot_falls_back_to_raw_history() -> None:
+    store = FakeConversationStore()
+    conversation = store.create_conversation("internal")
+    prior_messages = [
+        store.add_message(conversation.id, MessageRole.USER, f"Message {index}")
+        for index in range(6)
+    ]
+    current = store.add_message(conversation.id, MessageRole.USER, "Current")
+
+    def save_later_worker_summary() -> None:
+        assert store.compare_and_set_summary(
+            conversation.id,
+            expected_version=0,
+            summary="Later worker includes current",
+            through_message_id=current.id,
+        )
+
+    memory = ConversationMemory(
+        store,
+        FakeSummarizer(callback=save_later_worker_summary),
+        ConversationMemoryPolicy(recent_message_limit=2, summary_trigger_threshold=4),
+    )
+
+    history = memory.load_history(conversation.id, before_message_id=current.id)
+
+    assert history.summary is None
+    assert history.recent_messages == tuple(prior_messages)
+    assert all(message.id != current.id for message in history.recent_messages)
+
+
 def test_existing_summary_is_not_resummarized_and_conversations_are_isolated() -> None:
     store = FakeConversationStore()
     first = store.create_conversation("internal")

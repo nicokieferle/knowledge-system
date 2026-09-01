@@ -51,6 +51,9 @@ stale output.
 `ConversationContext.recent_messages` always excludes `current_user_message`. The current
 message consequently occurs exactly once in LLM context. Remaining messages after the summary
 boundary are kept in full, so no unsummarized gap exists between summary and recent context.
+If a concurrent worker has already advanced the shared summary through or beyond an older
+request's current message, that request ignores the newer summary and reconstructs its context
+from durable raw messages before its own immutable boundary.
 
 ## Proposal mechanisms
 
