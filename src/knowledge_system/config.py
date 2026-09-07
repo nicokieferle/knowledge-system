@@ -44,6 +44,16 @@ class MCPServerSettings:
     allowed_origins: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ChatClientSettings:
+    llm_provider: str
+    llm_model: str
+    llm_api_key: str
+    llm_base_url: str
+    llm_timeout_seconds: float
+    telegram_bot_token: str
+
+
 def _with_default_connect_timeout(database_url: str, seconds: int = 5) -> str:
     if "connect_timeout" in database_url or not database_url.startswith(
         ("postgresql://", "postgres://")
@@ -112,6 +122,24 @@ def get_mcp_server_settings() -> MCPServerSettings:
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
     )
+
+
+def get_chat_client_settings() -> ChatClientSettings:
+    _load_dotenv()
+    provider = os.getenv("LLM_PROVIDER", "openai-compatible").strip()
+    if provider != "openai-compatible":
+        raise ValueError("Unsupported LLM_PROVIDER")
+    settings = ChatClientSettings(
+        llm_provider=provider,
+        llm_model=os.getenv("LLM_MODEL", "").strip(),
+        llm_api_key=os.getenv("LLM_API_KEY", "").strip(),
+        llm_base_url=os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").strip(),
+        llm_timeout_seconds=float(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+        telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+    )
+    if not settings.llm_model or not settings.llm_api_key or not settings.telegram_bot_token:
+        raise ValueError("LLM_MODEL, LLM_API_KEY and TELEGRAM_BOT_TOKEN are required")
+    return settings
 
 
 def _parse_mcp_allowlist(name: str) -> tuple[str, ...]:

@@ -24,6 +24,7 @@ dev = [
 [project.scripts]
 knowledge = "knowledge_system.cli:main"
 knowledge-mcp = "knowledge_system.mcp_server:main"
+knowledge-telegram = "knowledge_system.telegram_bot:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

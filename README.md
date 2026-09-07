@@ -1,5 +1,23 @@
 # Knowledge System
 
+## V3.1: real chat, Telegram, and topic routing
+
+Telegram is a thin long-polling client, not conversation state. One Telegram chat/user
+identity can own any number of server-side conversations and stores one durable active
+conversation. Before a normal message reaches `ConversationService`, the provider-neutral
+`ConversationRouter` sees only the latest 20 topic records (ID, title, summary slot,
+activity, active marker) and chooses continue, switch, or create. `/new`, `/topics`, and
+`/switch` bypass model routing.
+
+Conversation memory remains durable application context, **not canonical knowledge**.
+Retrieval calls `KnowledgeService` directly (never MCP/HTTP), preserving source IDs for
+future read-only source adapters. A proposal is only a pending review object: neither chat,
+commands, nor suggestion buttons write Markdown or Git.
+
+The real provider adapter uses an OpenAI-compatible Chat Completions endpoint behind the
+existing chat, summarizer, classifier, and proposal ports plus the new routing port. Tests
+use deterministic fakes and make no Telegram or LLM network requests.
+
 Local-first prototype for a long-term personal knowledge base.
 
 ## Core rule

@@ -326,3 +326,35 @@ docker compose --env-file .env.server -f compose.server.yml ps
 ```
 
 No Git synchronization, database initialization or indexing runs automatically.
+# V3.1 Telegram service (manual deployment)
+
+V3.1 adds a `telegram-bot` long-polling service without an inbound port or Cloudflare/DNS
+change. It imports `ConversationService` and `KnowledgeService` directly; it does not call
+the local MCP endpoint. Use a dedicated Knowledge-System bot token, never the Journaling
+bot token.
+
+After backing up durable state using the existing procedure, deploy manually:
+
+```bash
+cd /path/to/Knowledge-System
+git fetch origin
+git checkout codex/v31-telegram-chat-routing
+git pull --ff-only
+cp .env.server .env.server.v30.backup
+# Add LLM_PROVIDER, LLM_MODEL, LLM_API_KEY, optional LLM_BASE_URL and
+# LLM_TIMEOUT_SECONDS, plus TELEGRAM_BOT_TOKEN to .env.server.
+docker compose --env-file .env.server -f compose.server.yml config --quiet
+docker compose --env-file .env.server -f compose.server.yml build
+docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp knowledge init-db
+docker compose --env-file .env.server -f compose.server.yml up -d postgres knowledge-mcp telegram-bot
+docker compose --env-file .env.server -f compose.server.yml ps
+docker compose --env-file .env.server -f compose.server.yml logs --tail=100 telegram-bot
+```
+
+Smoke-test in the dedicated Telegram bot: run `/new Knowledge-System`, send a normal
+question, run `/new Investments`, send an investment question, inspect `/topics`, switch
+back with `/switch 2` or the displayed UUID, then use `/remember` and exercise both inline
+suggestion choices. Restart with
+`docker compose --env-file .env.server -f compose.server.yml restart telegram-bot` and
+verify `/topics` and the active topic persisted. Finally verify MCP still advertises only
+`search_knowledge` and `get_document` using the existing MCP smoke procedure.
