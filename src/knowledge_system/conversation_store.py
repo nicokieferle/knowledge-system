@@ -30,6 +30,8 @@ class ConversationStore(Protocol):
 
     def get_conversation(self, conversation_id: UUID) -> Conversation: ...
 
+    def list_conversations(self, *, limit: int = 20) -> list[Conversation]: ...
+
     def add_message(
         self,
         conversation_id: UUID,
@@ -114,6 +116,21 @@ class PostgresConversationStore:
             raise ConversationNotFoundError(f"Unknown conversation `{conversation_id}`")
         return _conversation_from_row(row)
 
+    def list_conversations(self, *, limit: int = 20) -> list[Conversation]:
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        with self._connect(self.settings) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, client_type, title, external_conversation_id,
+                       created_at, updated_at, archived_at
+                FROM conversations WHERE archived_at IS NULL
+                ORDER BY updated_at DESC LIMIT %s
+                """,
+                (limit,),
+            ).fetchall()
+        return [_conversation_from_row(row) for row in rows]
+
     def add_message(
         self,
         conversation_id: UUID,
@@ -189,7 +206,7 @@ class PostgresConversationStore:
             SELECT id, conversation_id, role, content, created_at,
                    external_message_id, metadata
             FROM messages
-            WHERE {' AND '.join(clauses)}
+            WHERE {" AND ".join(clauses)}
             ORDER BY id
         """
         with self._connect(self.settings) as conn:

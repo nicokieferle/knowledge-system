@@ -27,6 +27,41 @@ def init_conversation_schema(conn: SchemaConnection) -> None:
         WHERE external_conversation_id IS NOT NULL
         """,
         """
+        CREATE TABLE IF NOT EXISTS client_states (
+            client_type text NOT NULL,
+            external_chat_id text NOT NULL,
+            external_user_id text NOT NULL,
+            active_conversation_id uuid REFERENCES conversations(id),
+            version bigint NOT NULL DEFAULT 1,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (client_type, external_chat_id, external_user_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS client_conversations (
+            client_type text NOT NULL,
+            external_chat_id text NOT NULL,
+            external_user_id text NOT NULL,
+            conversation_id uuid NOT NULL REFERENCES conversations(id),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (client_type, external_chat_id, external_user_id, conversation_id),
+            FOREIGN KEY (client_type, external_chat_id, external_user_id)
+                REFERENCES client_states(client_type, external_chat_id, external_user_id)
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS client_message_bindings (
+            client_type text NOT NULL,
+            external_chat_id text NOT NULL,
+            external_user_id text NOT NULL,
+            external_message_id text NOT NULL,
+            conversation_id uuid NOT NULL REFERENCES conversations(id),
+            created_at timestamptz NOT NULL DEFAULT now(),
+            PRIMARY KEY (client_type, external_chat_id, external_user_id, external_message_id)
+        )
+        """,
+        """
         CREATE TABLE IF NOT EXISTS messages (
             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
             conversation_id uuid NOT NULL REFERENCES conversations(id),

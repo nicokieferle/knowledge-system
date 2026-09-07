@@ -24,8 +24,7 @@ from .proposal_store import ProposalSuggestionStateError
 
 EXPLICIT_PROPOSAL_COMMANDS = frozenset({"/remember", "/propose"})
 SUGGESTION_CONFIRMATION_TEXT = (
-    "Das könnte sich für deine Wissensbasis eignen. "
-    "Soll ich daraus einen Wissensvorschlag machen?"
+    "Das könnte sich für deine Wissensbasis eignen. Soll ich daraus einen Wissensvorschlag machen?"
 )
 
 
@@ -94,7 +93,8 @@ class ConversationService:
             before_message_id=user_message.id,
         )
 
-        is_command = content.strip().lower() in EXPLICIT_PROPOSAL_COMMANDS
+        first_token = content.strip().lower().split(maxsplit=1)[0]
+        is_command = first_token in EXPLICIT_PROPOSAL_COMMANDS
         intent = (
             ConversationIntent.CREATE_PROPOSAL
             if is_command
@@ -160,6 +160,10 @@ class ConversationService:
             conversation_id,
             MessageRole.ASSISTANT,
             assistant_content,
+            external_message_id=(
+                f"response:{external_message_id}" if external_message_id is not None else None
+            ),
+            metadata={"reply_to_message_id": user_message.id},
         )
         return ConversationTurnResult(
             conversation_id=conversation_id,

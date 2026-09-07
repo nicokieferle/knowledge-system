@@ -93,3 +93,14 @@
 - [ ] journal SQLCipher adapter
 - [ ] project repositories
 - [ ] documents / PDFs
+# V3.1 — real chat, Telegram and topic routing
+
+- [x] Real OpenAI-compatible LLM provider
+- [x] Thin Telegram long-polling adapter
+- [x] Persistent generic client/conversation mapping
+- [x] Multi-topic `ConversationRouter`
+- [x] Manual `/new`, `/topics`, `/switch`
+- [x] Normal chat, isolated memory and direct knowledge retrieval
+- [x] Proposal intent and inline suggestion confirmation
+
+V3.2 proposal review UI/lifecycle and V3.3 approved Git/Markdown writes remain open.
