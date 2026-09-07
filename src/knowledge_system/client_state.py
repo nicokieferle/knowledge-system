@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -59,7 +60,8 @@ class PostgresClientStateStore:
         with self._connect(self.settings) as conn, conn.transaction():
             # Serialize updates for one client identity; this prevents lost active-topic updates.
             conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))", ("\0".join(self._key(identity)),)
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (self._advisory_lock_key(identity),),
             )
             row = conn.execute(
                 """
@@ -124,6 +126,19 @@ class PostgresClientStateStore:
         if not all(values):
             raise ValueError("client identity values must not be empty")
         return values
+
+    @classmethod
+    def _advisory_lock_key(cls, identity: ClientIdentity) -> str:
+        key = cls._key(identity)
+        return json.dumps(
+            {
+                "client_type": key[0],
+                "external_chat_id": key[1],
+                "external_user_id": key[2],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
 
     @staticmethod
     def _conversation(row: Sequence[Any]) -> Conversation:

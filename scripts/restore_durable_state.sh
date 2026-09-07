@@ -67,5 +67,14 @@ sequence_sql="
   'exec psql --username="$POSTGRES_USER" --dbname="$1" --quiet --command="$2"' \
   sequence-reset "${RESTORE_DATABASE}" "${sequence_sql}" >/dev/null
 
+integrity_sql=$(durable_integrity_sql)
+integrity_violation_count=$("${COMPOSE_COMMAND[@]}" exec -T postgres sh -eu -c \
+  'exec psql --username="$POSTGRES_USER" --dbname="$1" --tuples-only --no-align --command="$2"' \
+  restore-integrity-check "${RESTORE_DATABASE}" "${integrity_sql}")
+if [[ "${integrity_violation_count}" != "0" ]]; then
+  printf 'Restored durable state failed integrity check\n' >&2
+  exit 1
+fi
+
 printf 'restore_database=%s\n' "${RESTORE_DATABASE}"
 printf 'restore_completed=true\n'

@@ -74,3 +74,84 @@ durable_missing_sql() {
   printf "SELECT count(*) FROM (VALUES %s) AS required(name) WHERE to_regclass(name) IS NULL;" \
     "${joined}"
 }
+
+durable_integrity_sql() {
+  cat <<'SQL'
+SELECT
+  (SELECT count(*)
+   FROM public.client_states cs
+   LEFT JOIN public.conversations c ON c.id = cs.active_conversation_id
+   WHERE cs.active_conversation_id IS NOT NULL AND c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.client_conversations cc
+   LEFT JOIN public.client_states cs
+     ON cs.client_type = cc.client_type
+    AND cs.external_chat_id = cc.external_chat_id
+    AND cs.external_user_id = cc.external_user_id
+   WHERE cs.client_type IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.client_conversations cc
+   LEFT JOIN public.conversations c ON c.id = cc.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.client_message_bindings cmb
+   LEFT JOIN public.conversations c ON c.id = cmb.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.messages m
+   LEFT JOIN public.conversations c ON c.id = m.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.conversation_summaries cs
+   LEFT JOIN public.conversations c ON c.id = cs.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.conversation_summaries cs
+   LEFT JOIN public.messages m
+     ON m.conversation_id = cs.conversation_id
+    AND m.id = cs.through_message_id
+   WHERE m.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposal_suggestions ps
+   LEFT JOIN public.conversations c ON c.id = ps.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposal_suggestions ps
+   LEFT JOIN public.messages m
+     ON m.conversation_id = ps.conversation_id
+    AND m.id = ps.trigger_message_id
+   WHERE m.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposal_suggestions ps
+   LEFT JOIN public.messages m
+     ON m.conversation_id = ps.conversation_id
+    AND m.id = ps.resolution_message_id
+   WHERE ps.resolution_message_id IS NOT NULL AND m.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposals p
+   LEFT JOIN public.conversations c ON c.id = p.conversation_id
+   WHERE c.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposals p
+   LEFT JOIN public.messages m
+     ON m.conversation_id = p.conversation_id
+    AND m.id = p.trigger_message_id
+   WHERE m.id IS NULL)
+  +
+  (SELECT count(*)
+   FROM public.proposals p
+   LEFT JOIN public.proposal_suggestions ps ON ps.id = p.source_suggestion_id
+   WHERE p.source_suggestion_id IS NOT NULL AND ps.id IS NULL);
+SQL
+}

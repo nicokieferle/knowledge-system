@@ -60,6 +60,7 @@ def test_dump_and_restore_use_their_distinct_table_filter_syntax() -> None:
     assert 'DURABLE_PG_DUMP_TABLE_ARGS+=("--table=public.${table}")' in common
     assert 'DURABLE_PG_RESTORE_FILTER_ARGS=("--schema=public")' in common
     assert 'DURABLE_PG_RESTORE_FILTER_ARGS+=("--table=${table}")' in common
+    assert "durable_integrity_sql" in common
     assert "durable_pg_dump_table_args" in backup
     assert '"${DURABLE_PG_DUMP_TABLE_ARGS[@]}"' in backup
     assert "durable_pg_restore_filter_args" in restore
@@ -77,6 +78,8 @@ def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     assert "--single-transaction" in restore
     assert "--exit-on-error" in restore
     assert "--disable-triggers" in restore
+    assert restore.index("sequence-reset") < restore.index("restore-integrity-check")
+    assert "Restored durable state failed integrity check" in restore
     assert "--clean" not in restore
     assert "DROP " not in restore
     assert "TRUNCATE " not in restore
