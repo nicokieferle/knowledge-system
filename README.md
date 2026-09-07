@@ -235,9 +235,6 @@ only as `127.0.0.1:8000` on the Debian host. It is not configured for public acc
 The complete first-install, smoke-test, restart, persistence and update procedure is in
 [docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md).
 
-The reviewed continuation state and the next repository-only Codex Cloud task are recorded in
-[docs/CODEX_CLOUD_HANDOFF.md](docs/CODEX_CLOUD_HANDOFF.md).
-
 Machine-readable output:
 
 ```bash
