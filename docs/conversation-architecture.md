@@ -75,7 +75,8 @@ The PostgreSQL instance now contains two categories with different operational g
 
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Durable and backup-relevant: `conversations`, `messages`, `conversation_summaries`,
-  `proposal_suggestions` and `proposals`.
+  `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
+  `client_message_bindings`.
 
 `knowledge index` is scoped to chunk tables. `knowledge init-db` uses additive `IF NOT EXISTS`
 DDL and preserves durable rows. An index rebuild or reset must never drop, truncate or delete

@@ -171,9 +171,10 @@ def test_suggestion_persists_across_restart_and_confirmation_is_idempotent() -> 
         conversation_state=conversation_state,
         proposal_state=proposal_state,
     )
-    assert restarted_proposals.get_suggestion(
-        conversation.id, suggested.pending_action_id
-    ).status is SuggestionStatus.PENDING
+    assert (
+        restarted_proposals.get_suggestion(conversation.id, suggested.pending_action_id).status
+        is SuggestionStatus.PENDING
+    )
 
     confirmed = restarted.confirm_suggestion(
         conversation.id,
@@ -193,9 +194,10 @@ def test_suggestion_persists_across_restart_and_confirmation_is_idempotent() -> 
     proposal = restarted_proposals.state.proposals[confirmed.proposal_id]
     assert proposal.source_suggestion_id == suggested.pending_action_id
     assert proposal.status == "pending"
-    assert restarted_proposals.get_suggestion(
-        conversation.id, suggested.pending_action_id
-    ).status is SuggestionStatus.CONFIRMED
+    assert (
+        restarted_proposals.get_suggestion(conversation.id, suggested.pending_action_id).status
+        is SuggestionStatus.CONFIRMED
+    )
     confirmation = store.get_message(conversation.id, confirmed.user_message_id)
     assert confirmation.metadata["control"] == "confirm"
     generation_context = generator.contexts[0]
@@ -208,9 +210,7 @@ def test_suggestion_persists_across_restart_and_confirmation_is_idempotent() -> 
 
 
 def test_confirmation_failure_rolls_back_and_retry_creates_exactly_one_proposal() -> None:
-    service, _, proposals, _, _, _, _, _ = _service(
-        intent=ConversationIntent.SUGGEST_PROPOSAL
-    )
+    service, _, proposals, _, _, _, _, _ = _service(intent=ConversationIntent.SUGGEST_PROPOSAL)
     conversation = service.create_conversation("api")
     suggested = service.handle_user_message(conversation.id, "Potential insight")
     proposals.fail_confirmation_once = True
@@ -224,9 +224,10 @@ def test_confirmation_failure_rolls_back_and_retry_creates_exactly_one_proposal(
         )
 
     assert proposals.state.proposals == {}
-    assert proposals.get_suggestion(
-        conversation.id, suggested.pending_action_id
-    ).status is SuggestionStatus.PENDING
+    assert (
+        proposals.get_suggestion(conversation.id, suggested.pending_action_id).status
+        is SuggestionStatus.PENDING
+    )
 
     retried = service.confirm_suggestion(
         conversation.id,
@@ -240,9 +241,7 @@ def test_confirmation_failure_rolls_back_and_retry_creates_exactly_one_proposal(
 
 
 def test_rejection_creates_no_proposal_and_cross_conversation_resolution_is_rejected() -> None:
-    service, store, proposals, _, _, _, _, _ = _service(
-        intent=ConversationIntent.SUGGEST_PROPOSAL
-    )
+    service, store, proposals, _, _, _, _, _ = _service(intent=ConversationIntent.SUGGEST_PROPOSAL)
     first = service.create_conversation("internal")
     second = service.create_conversation("internal")
     suggested = service.handle_user_message(first.id, "Potential insight")
@@ -255,9 +254,10 @@ def test_rejection_creates_no_proposal_and_cross_conversation_resolution_is_reje
 
     assert rejected.action is ConversationAction.SUGGESTION_REJECTED
     assert proposals.state.proposals == {}
-    assert proposals.get_suggestion(
-        first.id, suggested.pending_action_id
-    ).status is SuggestionStatus.REJECTED
+    assert (
+        proposals.get_suggestion(first.id, suggested.pending_action_id).status
+        is SuggestionStatus.REJECTED
+    )
 
 
 def test_one_confirmation_message_cannot_confirm_two_suggestions() -> None:
@@ -285,9 +285,10 @@ def test_one_confirmation_message_cannot_confirm_two_suggestions() -> None:
 
     assert len(proposals.state.proposals) == 1
     assert len(generator.contexts) == 1
-    assert proposals.get_suggestion(
-        conversation.id, second.pending_action_id
-    ).status is SuggestionStatus.PENDING
+    assert (
+        proposals.get_suggestion(conversation.id, second.pending_action_id).status
+        is SuggestionStatus.PENDING
+    )
 
 
 def test_conversation_service_import_does_not_load_expensive_retrieval_stack() -> None:

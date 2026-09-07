@@ -25,7 +25,7 @@ class FakeTransport:
 
 
 def adapter_for(intent=ConversationIntent.CHAT):
-    service, store, proposals, classifier, chat, generator, retriever, _ = _service(intent=intent)
+    service, store, proposals, classifier, chat, _generator, _retriever, _ = _service(intent=intent)
     states = FakeClientStates(store=store)
     model = FakeRouterModel(
         ConversationRoutingDecision(ConversationRoutingAction.CONTINUE_CURRENT, confidence=0.9)

@@ -88,7 +88,9 @@ def semantic_search(
 ) -> list[SearchResult]:
     from .embedder import LocalEmbedder
 
-    embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions, verbose=verbose)
+    embedder = LocalEmbedder(
+        settings.embedding_model, settings.embedding_dimensions, verbose=verbose
+    )
     return semantic_search_with_embedder(settings, query, embedder, limit=limit, verbose=verbose)
 
 

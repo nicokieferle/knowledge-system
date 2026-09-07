@@ -30,4 +30,6 @@ def test_conversation_postgres_smoke() -> None:
     assert "confirmation_atomic=true" in completed.stdout
     assert "duplicate_confirmation_idempotent=true" in completed.stdout
     assert "concurrent_confirmation_tested=true" in completed.stdout
+    assert "client_state_persisted=true" in completed.stdout
+    assert "client_message_binding_idempotent=true" in completed.stdout
     assert "knowledge_unchanged=true" in completed.stdout

@@ -182,7 +182,10 @@ def test_context_builder_excludes_current_user_message() -> None:
 
     assert context.recent_messages == (prior,)
     assert context.current_user_message == current
-    assert sum(
-        message.id == current.id
-        for message in (*context.recent_messages, context.current_user_message)
-    ) == 1
+    assert (
+        sum(
+            message.id == current.id
+            for message in (*context.recent_messages, context.current_user_message)
+        )
+        == 1
+    )

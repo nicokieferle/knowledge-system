@@ -80,8 +80,9 @@ def main() -> None:
         from .evaluation import format_human_report, run_retrieval_eval
 
         if args.json:
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
-                io.StringIO()
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
             ):
                 report = run_retrieval_eval(
                     settings,

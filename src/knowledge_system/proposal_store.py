@@ -232,7 +232,11 @@ class PostgresProposalStore:
                     """,
                     (resolution_message_id, suggestion_id, conversation_id),
                 ).fetchone()
-        rejected = suggestion if suggestion.status is SuggestionStatus.REJECTED else _suggestion_from_row(row)
+        rejected = (
+            suggestion
+            if suggestion.status is SuggestionStatus.REJECTED
+            else _suggestion_from_row(row)
+        )
         print(f"[proposal] Suggestion {suggestion_id} status={rejected.status.value}")
         return rejected
 

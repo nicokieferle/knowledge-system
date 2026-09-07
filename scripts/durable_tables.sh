@@ -3,6 +3,9 @@
 # Shared by backup and restore so the durable table allowlist has one operational definition.
 readonly DURABLE_TABLES=(
   conversations
+  client_states
+  client_conversations
+  client_message_bindings
   messages
   conversation_summaries
   proposal_suggestions

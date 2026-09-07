@@ -59,10 +59,7 @@ def test_indexer_uses_source_adapter(monkeypatch, capsys) -> None:
 
     def fake_load_existing_chunk_state(settings: Settings, source_id: str):
         assert source_id == "test-source"
-        return {
-            chunk.chunk_key: (chunk.content_hash, settings.embedding_model)
-            for chunk in chunks
-        }
+        return {chunk.chunk_key: (chunk.content_hash, settings.embedding_model) for chunk in chunks}
 
     @contextmanager
     def fake_connect(settings: Settings):
@@ -84,6 +81,9 @@ def test_indexer_uses_source_adapter(monkeypatch, capsys) -> None:
     )
     durable_tables = (
         "conversations",
+        "client_states",
+        "client_conversations",
+        "client_message_bindings",
         "messages",
         "conversation_summaries",
         "proposal_suggestions",

@@ -103,9 +103,7 @@ def _call(coro):
 
 
 def _result_text(result: Any) -> str:
-    return "\n".join(
-        block.text for block in result.content if isinstance(block, TextContent)
-    )
+    return "\n".join(block.text for block in result.content if isinstance(block, TextContent))
 
 
 def _settings() -> Settings:
@@ -680,14 +678,10 @@ def test_streamable_http_uses_same_tools_service_and_lazy_reranker(monkeypatch) 
     with _running_http_server(server) as url:
         http_results = _call(scenario(url))
     stdio_tools = _call(_list_stdio_tools())
-    listed, fast, quality_first, quality_second, document, invalid_host, wrong_path = (
-        http_results
-    )
+    listed, fast, quality_first, quality_second, document, invalid_host, wrong_path = http_results
 
     assert [tool.name for tool in listed.tools] == ["search_knowledge", "get_document"]
-    assert [
-        (tool.name, tool.input_schema, tool.output_schema) for tool in listed.tools
-    ] == [
+    assert [(tool.name, tool.input_schema, tool.output_schema) for tool in listed.tools] == [
         (tool.name, tool.input_schema, tool.output_schema) for tool in stdio_tools.tools
     ]
     assert fast.is_error is False

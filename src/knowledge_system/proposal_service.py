@@ -52,9 +52,7 @@ class ProposalService:
                 source_client=source_client,
                 trigger_type=trigger_type,
                 trigger_message_id=trigger_message_id,
-                originating_message_ids=tuple(
-                    message.id for message in originating_messages
-                ),
+                originating_message_ids=tuple(message.id for message in originating_messages),
                 draft=draft,
             )
         )

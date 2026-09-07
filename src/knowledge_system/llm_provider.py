@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -187,7 +186,7 @@ class OpenAICompatibleProvider:
 
     # ProposalGenerator uses generate(); Python cannot overload it alongside ChatModel. The
     # small wrapper below exposes the expected port while sharing this provider transport.
-    def proposal_generator(self) -> "ProviderProposalGenerator":
+    def proposal_generator(self) -> ProviderProposalGenerator:
         return ProviderProposalGenerator(self)
 
     def _json(self, messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -220,7 +219,7 @@ class OpenAICompatibleProvider:
             if exc.code == 429:
                 raise LLMRateLimitError("LLM provider rate limit exceeded") from None
             raise LLMProviderError(f"LLM provider HTTP error ({exc.code})") from None
-        except (TimeoutError, socket.timeout):
+        except TimeoutError:
             raise LLMTimeoutError("LLM provider request timed out") from None
         except (urllib.error.URLError, KeyError, IndexError, TypeError, json.JSONDecodeError):
             raise LLMProviderError("LLM provider request failed") from None

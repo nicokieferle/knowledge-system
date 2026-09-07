@@ -16,9 +16,7 @@ DEFAULT_QUERY = "Wie können hohe Staatsschulden die Geldpolitik beeinflussen?"
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Smoke-test the read-only MCP HTTP endpoint"
-    )
+    parser = argparse.ArgumentParser(description="Smoke-test the read-only MCP HTTP endpoint")
     parser.add_argument(
         "url",
         nargs="?",
@@ -50,13 +48,8 @@ def _access_headers() -> dict[str, str]:
 
 def _require_result(result: Any, tool_name: str) -> dict[str, Any]:
     if result.is_error:
-        messages = [
-            getattr(block, "text", "")
-            for block in result.content
-        ]
-        raise RuntimeError(
-            f"{tool_name} failed: {' '.join(messages)}"
-        )
+        messages = [getattr(block, "text", "") for block in result.content]
+        raise RuntimeError(f"{tool_name} failed: {' '.join(messages)}")
     return result.structured_content or {}
 
 
@@ -82,9 +75,7 @@ async def _run(
             tool_names = [tool.name for tool in listed.tools]
 
             if tool_names != EXPECTED_TOOLS:
-                raise RuntimeError(
-                    f"Unexpected MCP tools: {tool_names}"
-                )
+                raise RuntimeError(f"Unexpected MCP tools: {tool_names}")
 
             fast_started = time.perf_counter()
             fast = await client.call_tool(
@@ -103,9 +94,7 @@ async def _run(
             fast_results = fast_content.get("results", [])
 
             if not fast_results:
-                raise RuntimeError(
-                    "search_knowledge fast returned no results"
-                )
+                raise RuntimeError("search_knowledge fast returned no results")
 
             quality_times: list[float] = []
             quality_results: list[dict[str, Any]] = []
@@ -120,9 +109,7 @@ async def _run(
                         "limit": 5,
                     },
                 )
-                quality_times.append(
-                    time.perf_counter() - quality_started
-                )
+                quality_times.append(time.perf_counter() - quality_started)
                 quality_content = _require_result(
                     quality,
                     "search_knowledge quality",
@@ -133,10 +120,7 @@ async def _run(
                 )
 
                 if not quality_results:
-                    raise RuntimeError(
-                        "search_knowledge quality "
-                        "returned no results"
-                    )
+                    raise RuntimeError("search_knowledge quality returned no results")
 
             first_hit = quality_results[0]
 
@@ -170,18 +154,14 @@ async def _run(
         "document": {
             "source_id": document_content["source_id"],
             "source_path": document_content["source_path"],
-            "content_characters": len(
-                document_content["content"]
-            ),
+            "content_characters": len(document_content["content"]),
         },
     }
 
 
 def main() -> None:
     args = _parse_args()
-    result = asyncio.run(
-        _run(args.url, args.query, args.timeout)
-    )
+    result = asyncio.run(_run(args.url, args.query, args.timeout))
     print(
         json.dumps(
             result,

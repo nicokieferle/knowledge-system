@@ -22,6 +22,9 @@ def test_durable_schema_is_additive_and_has_required_consistency_constraints() -
 
     sql = "\n".join(connection.statements).lower()
     assert "create table if not exists conversations" in sql
+    assert "create table if not exists client_states" in sql
+    assert "create table if not exists client_conversations" in sql
+    assert "create table if not exists client_message_bindings" in sql
     assert "create table if not exists messages" in sql
     assert "create table if not exists conversation_summaries" in sql
     assert "create table if not exists proposal_suggestions" in sql
@@ -53,6 +56,9 @@ def test_database_initialization_uses_additive_durable_schema(monkeypatch) -> No
     assert "create table if not exists proposals" in sql
     for table in (
         "conversations",
+        "client_states",
+        "client_conversations",
+        "client_message_bindings",
         "messages",
         "conversation_summaries",
         "proposal_suggestions",

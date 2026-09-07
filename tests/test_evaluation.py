@@ -188,7 +188,9 @@ def test_build_search_defaults_to_vector(monkeypatch) -> None:
         calls.append("vector")
         return lambda query, limit: [_result("vector.md", "Vector", 0.9)]
 
-    monkeypatch.setattr("knowledge_system.evaluation.build_reusable_embedder_search", fake_vector_search)
+    monkeypatch.setattr(
+        "knowledge_system.evaluation.build_reusable_embedder_search", fake_vector_search
+    )
 
     assert build_search(settings, verbose=False)("query", 5)[0].source_path == "vector.md"
     assert calls == ["vector"]
@@ -211,7 +213,10 @@ def test_build_search_selects_hybrid(monkeypatch) -> None:
 
     monkeypatch.setattr("knowledge_system.evaluation.build_hybrid_search", fake_hybrid_search)
 
-    assert build_search(settings, retriever="hybrid", verbose=False)("query", 5)[0].source_path == "hybrid.md"
+    assert (
+        build_search(settings, retriever="hybrid", verbose=False)("query", 5)[0].source_path
+        == "hybrid.md"
+    )
     assert calls == ["hybrid"]
 
 
@@ -232,7 +237,10 @@ def test_build_search_selects_reranker(monkeypatch) -> None:
 
     monkeypatch.setattr("knowledge_system.evaluation.build_reranker_search", fake_reranker_search)
 
-    assert build_search(settings, retriever="reranker", verbose=False)("query", 5)[0].source_path == "reranked.md"
+    assert (
+        build_search(settings, retriever="reranker", verbose=False)("query", 5)[0].source_path
+        == "reranked.md"
+    )
     assert calls == ["reranker"]
 
 
@@ -439,7 +447,9 @@ def test_run_retrieval_eval_selects_hybrid_with_german_keyword(monkeypatch, tmp_
     assert report.to_dict()["retriever"] == "hybrid"
 
 
-def test_run_retrieval_eval_selects_reranker_with_german_keyword(monkeypatch, tmp_path: Path) -> None:
+def test_run_retrieval_eval_selects_reranker_with_german_keyword(
+    monkeypatch, tmp_path: Path
+) -> None:
     suite = tmp_path / "suite.jsonl"
     suite.write_text(
         '{"id":"C-1","query":"query","expected_sources":["reranked.md"]}',

@@ -135,7 +135,9 @@ def _parse_eval_case(raw: object, line_number: int) -> EvalCase:
     if not expected_sources:
         raise ValueError(f"Line {line_number}: `expected_sources` must not be empty")
 
-    expected_headings = _string_list(raw.get("expected_headings", []), "expected_headings", line_number)
+    expected_headings = _string_list(
+        raw.get("expected_headings", []), "expected_headings", line_number
+    )
     description = raw.get("description", "")
     if not isinstance(description, str):
         raise TypeError(f"Line {line_number}: `description` must be a string")
@@ -180,7 +182,9 @@ def _matches_expected(case: EvalCase, result: SearchResult) -> bool:
     return not case.expected_headings or result.heading_path in case.expected_headings
 
 
-def evaluate_cases(cases: list[EvalCase], search: SearchFn, limit: int = 5) -> tuple[EvalCaseResult, ...]:
+def evaluate_cases(
+    cases: list[EvalCase], search: SearchFn, limit: int = 5
+) -> tuple[EvalCaseResult, ...]:
     if limit < 5:
         raise ValueError("Eval search limit must be at least 5 to compute Hit@5")
     if not cases:

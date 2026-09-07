@@ -161,7 +161,8 @@ docker compose --env-file .env.server -f compose.server.yml ps
 Named volumes survive `down`. Do not use `docker compose ... down -v` after V3 conversation
 features hold real data: it deletes the PostgreSQL volume, including non-rebuildable
 conversations, messages, summaries, suggestions and proposals. Back up that volume before
-destructive maintenance. Canonical Markdown remains in the Git checkout, while only the
+destructive maintenance. V3.1 client routing state is also non-rebuildable and belongs in
+the same durable backup. Canonical Markdown remains in the Git checkout, while only the
 retrieval tables and model cache can be recreated from source.
 
 ## Durable state backup
@@ -170,7 +171,8 @@ PostgreSQL contains two operationally different data classes:
 
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Non-rebuildable: `conversations`, `messages`, `conversation_summaries`,
-  `proposal_suggestions` and `proposals`.
+  `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
+  `client_message_bindings`.
 
 The scripts use the PostgreSQL 17 `pg_dump` and `pg_restore` binaries already present in the
 PostgreSQL container. They never put the database password on the command line. The durable
@@ -242,10 +244,10 @@ docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-m
 ```
 
 Both commands must report identical counts and `durable_state_sha256`. The fingerprint covers
-IDs, statuses, foreign-key relationships, summary boundaries, suggestion links and hashed
-private fields. It never prints the private field values. Verify all five table counts, the
-fingerprint, a successful reconnect and the refusal of a second restore before considering a
-backup recoverable.
+IDs, statuses, foreign-key relationships, summary boundaries, suggestion links, client routing
+links and hashed private fields. It never prints the private field values. Verify all eight
+table counts, the fingerprint, a successful reconnect and the refusal of a second restore
+before considering a backup recoverable.
 
 ## Isolated V3.0 PostgreSQL recovery smoke
 
@@ -284,7 +286,7 @@ unpublished PostgreSQL 17 + pgvector container and a project-scoped volume. It c
 
 - durable conversation, message, summary, suggestion and proposal persistence;
 - atomic and idempotent suggestion confirmation plus concurrent update handling;
-- a custom-format backup containing only the five durable tables and message sequence;
+- a custom-format backup containing only the durable tables and message sequence;
 - an identical source/restore fingerprint after restore into a fresh second database;
 - refusal of a repeated restore into the non-empty target without changing its fingerprint;
 - identical source/restore message sequence state; and

@@ -57,8 +57,7 @@ def index_knowledge(settings: Settings, source: SourceAdapter | None = None) -> 
         embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
         vectors = embedder.encode([chunk.content for chunk in changed])
         embeddings_by_key = {
-            chunk.chunk_key: Vector(vector)
-            for chunk, vector in zip(changed, vectors, strict=True)
+            chunk.chunk_key: Vector(vector) for chunk, vector in zip(changed, vectors, strict=True)
         }
 
     with connect(settings) as conn, conn.transaction():
@@ -121,6 +120,5 @@ def index_knowledge(settings: Settings, source: SourceAdapter | None = None) -> 
         )
 
     print(
-        f"[index] Complete: {len(all_chunks)} current chunks, "
-        f"{len(changed)} newly embedded/updated"
+        f"[index] Complete: {len(all_chunks)} current chunks, {len(changed)} newly embedded/updated"
     )

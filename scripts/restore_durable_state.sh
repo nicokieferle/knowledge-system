@@ -52,7 +52,8 @@ fi
 
 "${COMPOSE_COMMAND[@]}" exec -T postgres sh -eu -c \
   'database=$1; shift; exec pg_restore --username="$POSTGRES_USER" --dbname="$database" \
-    --data-only --no-owner --no-privileges --single-transaction --exit-on-error "$@"' \
+    --data-only --no-owner --no-privileges --single-transaction --exit-on-error \
+    --disable-triggers "$@"' \
   restore-data "${RESTORE_DATABASE}" "${DURABLE_PG_RESTORE_FILTER_ARGS[@]}" <"${backup_file}"
 
 sequence_sql="
