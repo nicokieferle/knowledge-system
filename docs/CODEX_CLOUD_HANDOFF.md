@@ -135,7 +135,8 @@ completed or consciously deferred by the operator.
 ## Prompt for the next Codex Cloud task
 
 ```text
-Work in Hengsto/Knowledge-System from the latest main. Read AGENTS.md, README.md,
+Work in Hengsto/Knowledge-System starting from branch codex/cloud-deploy-handoff, which is
+based on the latest main and contains this handoff. Read AGENTS.md, README.md,
 docs/ROADMAP.md, docs/DEPLOYMENT_DEBIAN.md and docs/CODEX_CLOUD_HANDOFF.md completely.
 
 Implement only the versioned, strongly restricted project-deploy control described in the
