@@ -161,7 +161,8 @@ docker compose --env-file .env.server -f compose.server.yml ps
 Named volumes survive `down`. Do not use `docker compose ... down -v` after V3 conversation
 features hold real data: it deletes the PostgreSQL volume, including non-rebuildable
 conversations, messages, summaries, suggestions and proposals. Back up that volume before
-destructive maintenance. Canonical Markdown remains in the Git checkout, while only the
+destructive maintenance. V3.1 client routing state is also non-rebuildable and belongs in
+the same durable backup. Canonical Markdown remains in the Git checkout, while only the
 retrieval tables and model cache can be recreated from source.
 
 ## Durable state backup
@@ -170,7 +171,8 @@ PostgreSQL contains two operationally different data classes:
 
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Non-rebuildable: `conversations`, `messages`, `conversation_summaries`,
-  `proposal_suggestions` and `proposals`.
+  `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
+  `client_message_bindings`.
 
 The scripts use the PostgreSQL 17 `pg_dump` and `pg_restore` binaries already present in the
 PostgreSQL container. They never put the database password on the command line. The durable
@@ -242,10 +244,10 @@ docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-m
 ```
 
 Both commands must report identical counts and `durable_state_sha256`. The fingerprint covers
-IDs, statuses, foreign-key relationships, summary boundaries, suggestion links and hashed
-private fields. It never prints the private field values. Verify all five table counts, the
-fingerprint, a successful reconnect and the refusal of a second restore before considering a
-backup recoverable.
+IDs, statuses, foreign-key relationships, summary boundaries, suggestion links, client routing
+links and hashed private fields. It never prints the private field values. Verify all eight
+table counts, the fingerprint, a successful reconnect and the refusal of a second restore
+before considering a backup recoverable.
 
 ## Isolated V3.0 PostgreSQL recovery smoke
 
@@ -284,7 +286,7 @@ unpublished PostgreSQL 17 + pgvector container and a project-scoped volume. It c
 
 - durable conversation, message, summary, suggestion and proposal persistence;
 - atomic and idempotent suggestion confirmation plus concurrent update handling;
-- a custom-format backup containing only the five durable tables and message sequence;
+- a custom-format backup containing only the durable tables and message sequence;
 - an identical source/restore fingerprint after restore into a fresh second database;
 - refusal of a repeated restore into the non-empty target without changing its fingerprint;
 - identical source/restore message sequence state; and
@@ -326,3 +328,35 @@ docker compose --env-file .env.server -f compose.server.yml ps
 ```
 
 No Git synchronization, database initialization or indexing runs automatically.
+# V3.1 Telegram service (manual deployment)
+
+V3.1 adds a `telegram-bot` long-polling service without an inbound port or Cloudflare/DNS
+change. It imports `ConversationService` and `KnowledgeService` directly; it does not call
+the local MCP endpoint. Use a dedicated Knowledge-System bot token, never the Journaling
+bot token.
+
+After backing up durable state using the existing procedure, deploy manually:
+
+```bash
+cd /path/to/Knowledge-System
+git fetch origin
+git checkout codex/v31-telegram-chat-routing
+git pull --ff-only
+cp .env.server .env.server.v30.backup
+# Add LLM_PROVIDER, LLM_MODEL, LLM_API_KEY, optional LLM_BASE_URL and
+# LLM_TIMEOUT_SECONDS, plus TELEGRAM_BOT_TOKEN to .env.server.
+docker compose --env-file .env.server -f compose.server.yml config --quiet
+docker compose --env-file .env.server -f compose.server.yml build
+docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp knowledge init-db
+docker compose --env-file .env.server -f compose.server.yml up -d postgres knowledge-mcp telegram-bot
+docker compose --env-file .env.server -f compose.server.yml ps
+docker compose --env-file .env.server -f compose.server.yml logs --tail=100 telegram-bot
+```
+
+Smoke-test in the dedicated Telegram bot: run `/new Knowledge-System`, send a normal
+question, run `/new Investments`, send an investment question, inspect `/topics`, switch
+back with `/switch 2` or the displayed UUID, then use `/remember` and exercise both inline
+suggestion choices. Restart with
+`docker compose --env-file .env.server -f compose.server.yml restart telegram-bot` and
+verify `/topics` and the active topic persisted. Finally verify MCP still advertises only
+`search_knowledge` and `get_document` using the existing MCP smoke procedure.

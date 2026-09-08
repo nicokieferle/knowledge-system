@@ -13,6 +13,9 @@ from .db import connect
 
 DURABLE_TABLES = (
     "conversations",
+    "client_states",
+    "client_conversations",
+    "client_message_bindings",
     "messages",
     "conversation_summaries",
     "proposal_suggestions",
@@ -33,6 +36,24 @@ def read_durable_state_fingerprint(settings: Settings) -> DurableStateFingerprin
             SELECT id, title, client_type, external_conversation_id,
                    created_at, updated_at, archived_at
             FROM conversations ORDER BY id
+        """,
+        "client_states": """
+            SELECT client_type, external_chat_id, external_user_id,
+                   active_conversation_id, version, created_at, updated_at
+            FROM client_states
+            ORDER BY client_type, external_chat_id, external_user_id
+        """,
+        "client_conversations": """
+            SELECT client_type, external_chat_id, external_user_id,
+                   conversation_id, created_at
+            FROM client_conversations
+            ORDER BY client_type, external_chat_id, external_user_id, conversation_id
+        """,
+        "client_message_bindings": """
+            SELECT client_type, external_chat_id, external_user_id,
+                   external_message_id, conversation_id, created_at
+            FROM client_message_bindings
+            ORDER BY client_type, external_chat_id, external_user_id, external_message_id
         """,
         "messages": """
             SELECT id, conversation_id, role, content, created_at,
@@ -59,6 +80,9 @@ def read_durable_state_fingerprint(settings: Settings) -> DurableStateFingerprin
     }
     sensitive_columns = {
         "conversations": {1, 3},
+        "client_states": {1, 2},
+        "client_conversations": {1, 2},
+        "client_message_bindings": {1, 2, 3},
         "messages": {3, 5, 6},
         "conversation_summaries": {2},
         "proposal_suggestions": {4},
@@ -71,7 +95,9 @@ def read_durable_state_fingerprint(settings: Settings) -> DurableStateFingerprin
             rows = conn.execute(queries[table]).fetchall()
             payload[table] = [
                 [
-                    _sensitive_digest(value) if index in sensitive_columns[table] else _stable(value)
+                    _sensitive_digest(value)
+                    if index in sensitive_columns[table]
+                    else _stable(value)
                     for index, value in enumerate(row)
                 ]
                 for row in rows

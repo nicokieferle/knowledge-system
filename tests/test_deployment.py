@@ -44,5 +44,8 @@ def test_debian_documentation_has_durable_backup_and_defensive_restore_commands(
     assert "durable_state_fingerprint.py" in deployment
     assert "does not restore directly into the configured production database" in deployment
     assert "and any non-empty target" in deployment
+    assert "client_states" in deployment
+    assert "client_conversations" in deployment
+    assert "client_message_bindings" in deployment
     assert "Do not use `docker compose ... down -v`" in deployment
     assert "/data/knowledgesystem/backups" in deployment

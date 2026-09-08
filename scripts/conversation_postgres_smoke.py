@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Barrier
 from urllib.parse import urlsplit
 
+from knowledge_system.client_state import ClientIdentity, PostgresClientStateStore
 from knowledge_system.config import Settings
 from knowledge_system.conversation_memory import (
     ConversationContextBuilder,
@@ -189,6 +190,36 @@ def run_smoke(settings: Settings) -> dict[str, object]:
         for message in reopened_store.list_messages(conversation_b.id)
     )
 
+    client_identity = ClientIdentity(
+        client_type="telegram",
+        external_chat_id="synthetic-chat-1",
+        external_user_id="synthetic-user-1",
+    )
+    client_states = PostgresClientStateStore(settings)
+    assert client_states.get(client_identity) is None
+    first_state = client_states.activate(client_identity, conversation_a.id)
+    second_state = client_states.activate(client_identity, conversation_b.id)
+    assert first_state.version == 1
+    assert second_state.version == 2
+    assert second_state.active_conversation_id == conversation_b.id
+    assert [
+        conversation.id for conversation in client_states.list_conversations(client_identity)
+    ] == [
+        conversation_b.id,
+        conversation_a.id,
+    ]
+    bound_first = client_states.bind_message(
+        client_identity,
+        "synthetic-telegram-message-1",
+        conversation_a.id,
+    )
+    bound_retry = client_states.bind_message(
+        client_identity,
+        "synthetic-telegram-message-1",
+        conversation_b.id,
+    )
+    assert bound_first == bound_retry == conversation_a.id
+
     command_result = service.handle_user_message(conversation_a.id, "/remember")
     classifier.intent = ConversationIntent.CREATE_PROPOSAL
     intent_result = service.handle_user_message(conversation_b.id, "Synthetic create trigger")
@@ -292,6 +323,9 @@ def run_smoke(settings: Settings) -> dict[str, object]:
     final_counts = _durable_counts(settings)
     assert final_counts == {
         "conversations": 3,
+        "client_states": 1,
+        "client_conversations": 2,
+        "client_message_bindings": 1,
         "messages": 26,
         "conversation_summaries": 3,
         "proposal_suggestions": 2,
@@ -312,6 +346,8 @@ def run_smoke(settings: Settings) -> dict[str, object]:
         "duplicate_confirmation_idempotent": True,
         "concurrent_confirmation_tested": True,
         "concurrent_summary_tested": True,
+        "client_state_persisted": True,
+        "client_message_binding_idempotent": True,
         "knowledge_unchanged": True,
         "durable_state_counts": final_counts,
         "durable_state_sha256": final_fingerprint.sha256,

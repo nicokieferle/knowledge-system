@@ -57,9 +57,8 @@ class GitMarkdownSource:
         except ValueError:
             return False
         relative_posix = relative.as_posix()
-        return (
-            relative_posix not in ROOT_MARKDOWN_EXCLUDES
-            and not any(part.startswith(".") for part in relative.parts)
+        return relative_posix not in ROOT_MARKDOWN_EXCLUDES and not any(
+            part.startswith(".") for part in relative.parts
         )
 
     def _read_path(self, path: Path) -> SourceDocument:

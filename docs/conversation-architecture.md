@@ -75,7 +75,8 @@ The PostgreSQL instance now contains two categories with different operational g
 
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Durable and backup-relevant: `conversations`, `messages`, `conversation_summaries`,
-  `proposal_suggestions` and `proposals`.
+  `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
+  `client_message_bindings`.
 
 `knowledge index` is scoped to chunk tables. `knowledge init-db` uses additive `IF NOT EXISTS`
 DDL and preserves durable rows. An index rebuild or reset must never drop, truncate or delete
@@ -88,3 +89,31 @@ A Telegram adapter will translate updates into `ConversationService` calls and r
 structured `ConversationTurnResult`; it will not own history or intent state. A real LLM
 provider will implement the four existing protocols. Proposal review, approval, canonical
 file changes, Git operations and reindexing remain later, separately guarded stages.
+# V3.1 client and routing layer
+
+```text
+Telegram long polling -> TelegramAdapter -> ConversationRouter -> ConversationService
+                                                               -> ConversationMemory
+                                                               -> KnowledgeService
+                                                               -> provider-neutral LLM ports
+                                                               -> ProposalService -> PostgreSQL
+```
+
+Telegram parses updates, maps IDs, handles commands/callbacks and formats replies. It has
+no SQL, memory, retrieval, proposal-generation, or prompt logic. Generic `client_states`
+stores the active conversation per `(client_type, external_chat_id, external_user_id)`;
+`client_conversations` records ownership and `client_message_bindings` makes Telegram
+message retries stay attached to their original topic. PostgreSQL advisory locking
+serializes active-topic changes.
+
+The router supplies the model with at most 20 recently active owned conversations, never
+their complete histories. A switch target is accepted only if it is among those owned,
+non-archived candidates. Invalid model IDs fail closed by creating an isolated topic.
+Manual commands bypass routing entirely.
+
+Each conversation's memory builder retains the V3.0 snapshot boundary and exactly-once
+current-user-message invariant, so investment content cannot enter a Knowledge-System
+topic merely because both came from one Telegram chat. Memory is not canonical knowledge.
+Suggestions are durable pending actions; inline callbacks carry only action + UUID and the
+proposal store performs ownership, status, and idempotency checks. A pending proposal is
+still not a knowledge or Git write.

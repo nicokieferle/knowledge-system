@@ -86,6 +86,13 @@ class FakeConversationStore:
         except KeyError as exc:
             raise ConversationNotFoundError(str(conversation_id)) from exc
 
+    def list_conversations(self, *, limit: int = 20) -> list[Conversation]:
+        return sorted(
+            (item for item in self.state.conversations.values() if item.archived_at is None),
+            key=lambda item: item.updated_at,
+            reverse=True,
+        )[:limit]
+
     def add_message(
         self,
         conversation_id: UUID,
@@ -141,9 +148,7 @@ class FakeConversationStore:
     def get_messages(self, conversation_id: UUID, message_ids) -> list[Message]:
         wanted = set(message_ids)
         messages = [
-            message
-            for message in self.list_messages(conversation_id)
-            if message.id in wanted
+            message for message in self.list_messages(conversation_id) if message.id in wanted
         ]
         if len(messages) != len(wanted):
             raise MessageNotFoundError("missing message")
@@ -349,7 +354,9 @@ class FakeSummarizer:
         self.calls.append((previous_summary, messages))
         if self.callback:
             self.callback()
-        return " | ".join(filter(None, (previous_summary, *(message.content for message in messages))))
+        return " | ".join(
+            filter(None, (previous_summary, *(message.content for message in messages)))
+        )
 
 
 class FakeChatModel:

@@ -81,9 +81,7 @@ def create_mcp_server(service: KnowledgeService | None = None) -> MCPServer:
         if not normalized_query:
             raise ToolError("query must not be empty")
         if not MIN_SEARCH_LIMIT <= limit <= MAX_SEARCH_LIMIT:
-            raise ToolError(
-                f"limit must be between {MIN_SEARCH_LIMIT} and {MAX_SEARCH_LIMIT}"
-            )
+            raise ToolError(f"limit must be between {MIN_SEARCH_LIMIT} and {MAX_SEARCH_LIMIT}")
 
         try:
             results = knowledge_service.search(normalized_query, mode=mode, limit=limit)

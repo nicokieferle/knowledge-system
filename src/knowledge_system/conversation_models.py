@@ -39,6 +39,12 @@ class ConversationAction(StrEnum):
     SUGGESTION_REJECTED = "suggestion_rejected"
 
 
+class ConversationRoutingAction(StrEnum):
+    CONTINUE_CURRENT = "continue_current"
+    SWITCH_TO_EXISTING = "switch_to_existing"
+    START_NEW_CONVERSATION = "start_new_conversation"
+
+
 class SuggestionStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
@@ -60,6 +66,32 @@ class Conversation:
     created_at: datetime
     updated_at: datetime
     archived_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ConversationTopic:
+    conversation_id: UUID
+    title: str
+    topic_summary: str | None
+    updated_at: datetime
+    is_active: bool = False
+
+
+@dataclass(frozen=True)
+class ConversationRoutingDecision:
+    action: ConversationRoutingAction
+    conversation_id: UUID | None = None
+    suggested_title: str | None = None
+    confidence: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.confidence <= 1:
+            raise ValueError("routing confidence must be between 0 and 1")
+        if self.action is ConversationRoutingAction.SWITCH_TO_EXISTING:
+            if self.conversation_id is None:
+                raise ValueError("switch decisions require conversation_id")
+        elif self.conversation_id is not None:
+            raise ValueError("conversation_id is only valid when switching")
 
 
 @dataclass(frozen=True)
@@ -124,7 +156,9 @@ class ProposalGenerationContext:
     relevant_knowledge: tuple[KnowledgeResult, ...]
 
     def __post_init__(self) -> None:
-        if any(message.conversation_id != self.conversation_id for message in self.originating_messages):
+        if any(
+            message.conversation_id != self.conversation_id for message in self.originating_messages
+        ):
             raise ValueError("originating_messages must belong to the proposal conversation")
         if any(message.id == self.trigger_message_id for message in self.originating_messages):
             raise ValueError("trigger message must not be proposal content context")
@@ -200,3 +234,11 @@ class KnowledgeRetriever(Protocol):
         mode: RetrievalMode = "quality",
         limit: int = 5,
     ) -> list[KnowledgeResult]: ...
+
+
+class ConversationRoutingModel(Protocol):
+    def route(
+        self,
+        current_user_message: str,
+        candidates: tuple[ConversationTopic, ...],
+    ) -> ConversationRoutingDecision: ...
