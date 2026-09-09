@@ -41,6 +41,9 @@ class FakeClientStates:
     def bind_message(self, identity, external_message_id, conversation_id):
         return self.bindings.setdefault((identity, external_message_id), conversation_id)
 
+    def get_message_binding(self, identity, external_message_id):
+        return self.bindings.get((identity, external_message_id))
+
 
 class FakeRouterModel:
     def __init__(self, decision):

@@ -22,6 +22,10 @@ from .conversation_models import (
 class LLMProviderError(RuntimeError):
     """Provider failure whose message deliberately contains no request or secret data."""
 
+    def __init__(self, message: str, *, http_status: int | None = None) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+
 
 class LLMResponseError(LLMProviderError):
     pass
@@ -217,8 +221,12 @@ class OpenAICompatibleProvider:
             return str(result["choices"][0]["message"]["content"])
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
-                raise LLMRateLimitError("LLM provider rate limit exceeded") from None
-            raise LLMProviderError(f"LLM provider HTTP error ({exc.code})") from None
+                raise LLMRateLimitError(
+                    "LLM provider rate limit exceeded", http_status=429
+                ) from None
+            raise LLMProviderError(
+                f"LLM provider HTTP error ({exc.code})", http_status=exc.code
+            ) from None
         except TimeoutError:
             raise LLMTimeoutError("LLM provider request timed out") from None
         except (urllib.error.URLError, KeyError, IndexError, TypeError, json.JSONDecodeError):

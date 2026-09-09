@@ -54,7 +54,11 @@ class TelegramAdapter:
         text = message.text.strip()
         command, _, argument = text.partition(" ")
         if command == "/new":
-            conversation = self.router.create(identity, argument.strip() or None)
+            bound_id = self.states.get_message_binding(identity, message.message_id)
+            if bound_id is None:
+                conversation = self.router.create(identity, argument.strip() or None)
+                bound_id = self.states.bind_message(identity, message.message_id, conversation.id)
+            conversation = self.router.store.get_conversation(bound_id)
             self.transport.send_message(message.chat_id, f"Neues Thema: {conversation.title}")
             return
         if command == "/topics":
@@ -75,8 +79,12 @@ class TelegramAdapter:
                 self.transport.send_message(message.chat_id, f"Aktives Thema: {conversation.title}")
             return
 
-        routed = self.router.route(identity, text)
-        bound_id = self.states.bind_message(identity, message.message_id, routed.conversation.id)
+        bound_id = self.states.get_message_binding(identity, message.message_id)
+        if bound_id is None:
+            routed = self.router.route(identity, text)
+            bound_id = self.states.bind_message(
+                identity, message.message_id, routed.conversation.id
+            )
         # A retry must use the original topic even if routing state changed meanwhile.
         result = self.service.handle_user_message(
             bound_id, text, external_message_id=f"telegram:message:{message.message_id}"

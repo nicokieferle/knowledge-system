@@ -27,6 +27,10 @@ class ClientState:
 
 
 class ClientStateStore(Protocol):
+    def get_message_binding(
+        self, identity: ClientIdentity, external_message_id: str
+    ) -> UUID | None: ...
+
     def get(self, identity: ClientIdentity) -> ClientState | None: ...
 
     def activate(self, identity: ClientIdentity, conversation_id: UUID) -> ClientState: ...
@@ -55,6 +59,18 @@ class PostgresClientStateStore:
                 self._key(identity),
             ).fetchone()
         return None if row is None else ClientState(identity, row[0], row[1])
+
+    def get_message_binding(
+        self, identity: ClientIdentity, external_message_id: str
+    ) -> UUID | None:
+        with self._connect(self.settings) as conn:
+            row = conn.execute(
+                """SELECT conversation_id FROM client_message_bindings
+                   WHERE client_type=%s AND external_chat_id=%s AND external_user_id=%s
+                     AND external_message_id=%s""",
+                (*self._key(identity), external_message_id),
+            ).fetchone()
+        return row[0] if row else None
 
     def activate(self, identity: ClientIdentity, conversation_id: UUID) -> ClientState:
         with self._connect(self.settings) as conn, conn.transaction():

@@ -88,6 +88,47 @@ class ConversationService:
             external_message_id,
             metadata,
         )
+        # Replay durable outcomes before any fallible or nondeterministic model calls.
+        # Telegram may retry after the DB committed but delivery failed.
+        proposals = self.proposal_service.proposal_store
+        proposal = proposals.find_proposal(conversation_id, user_message.id)
+        if proposal is not None:
+            return ConversationTurnResult(
+                conversation_id=conversation_id,
+                user_message_id=user_message.id,
+                action=ConversationAction.PROPOSAL_CREATED,
+                proposal_id=proposal.id,
+            )
+        suggestion = proposals.find_suggestion(conversation_id, user_message.id)
+        response_id = f"response:{external_message_id}" if external_message_id is not None else None
+        assistant = (
+            self.conversation_store.find_external_message(conversation_id, response_id)
+            if response_id is not None
+            else None
+        )
+        if suggestion is not None:
+            # Also recover interruption between suggestion commit and assistant commit.
+            assistant = assistant or self.conversation_store.add_message(
+                conversation_id,
+                MessageRole.ASSISTANT,
+                SUGGESTION_CONFIRMATION_TEXT,
+                external_message_id=response_id,
+                metadata={"proposal_suggestion_id": str(suggestion.id)},
+            )
+            return ConversationTurnResult(
+                conversation_id=conversation_id,
+                user_message_id=user_message.id,
+                assistant_message=assistant,
+                action=ConversationAction.PROPOSAL_CONFIRMATION_REQUIRED,
+                pending_action_id=suggestion.id,
+            )
+        if assistant is not None:
+            return ConversationTurnResult(
+                conversation_id=conversation_id,
+                user_message_id=user_message.id,
+                assistant_message=assistant,
+                action=ConversationAction.CHAT,
+            )
         history = self.context_builder.load_history(
             conversation_id,
             before_message_id=user_message.id,
@@ -132,6 +173,7 @@ class ConversationService:
                 conversation_id,
                 MessageRole.ASSISTANT,
                 SUGGESTION_CONFIRMATION_TEXT,
+                external_message_id=response_id,
                 metadata={"proposal_suggestion_id": str(suggestion.id)},
             )
             return ConversationTurnResult(
@@ -190,6 +232,17 @@ class ConversationService:
             {"proposal_suggestion_id": str(suggestion_id), "control": "confirm"},
         )
         self._validate_resolution_message(confirmation, suggestion_id, "confirm")
+        existing = self.proposal_service.proposal_store.find_proposal(
+            conversation_id, confirmation.id
+        )
+        if existing is not None and existing.source_suggestion_id == suggestion_id:
+            return ConversationTurnResult(
+                conversation_id=conversation_id,
+                user_message_id=confirmation.id,
+                action=ConversationAction.PROPOSAL_CREATED,
+                proposal_id=existing.id,
+                pending_action_id=suggestion_id,
+            )
         originating_ids = tuple(
             dict.fromkeys((*suggestion.originating_message_ids, suggestion.trigger_message_id))
         )
