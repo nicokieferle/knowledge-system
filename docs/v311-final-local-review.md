@@ -1,5 +1,35 @@
 # V3.1.1 final local review
 
+## Routing-validation follow-up
+
+The second review's malformed-routing blocker is addressed by explicit JSON type
+checks for action, conversation_id, suggested_title and confidence. Invalid UUIDs,
+types and confidence values become a fixed-message LLMResponseError without an
+exposed exception chain. A provider-to-polling regression verifies retry and offset
+preservation. No intent checkpoint or schema/workflow change was introduced.
+
+Fresh validation of this follow-up: **232 passed, 0 failed, 0 skipped** in the full
+suite, including real isolated PostgreSQL 17.11. The separate PostgreSQL run passed
+**13 tests, 0 failed, 0 skipped**. Ruff check, format check, diff check and compileall
+passed. These current results are separate from the historical gate below.
+
+## Final gate result (supersedes the historical attempt below)
+
+The subsequent isolated PostgreSQL 17.11 gate passed on commit
+`10512691a61dcfd0c411c05afa0be624a34b8b4e`: **13 integration tests passed,
+0 failed, 0 skipped**. The full suite then passed **196 tests, 0 failed,
+0 skipped**. Durable-state and FK consistency were confirmed. The temporary
+container was removed; no production resources or existing volumes were used.
+The failed provisioning attempt and its test counts below are historical only.
+These numbers describe that completed gate, not a fresh run of later changes.
+
+Processing becomes deterministic once the relevant durable binding/result exists.
+Classification before result persistence may be repeated after a failure.
+Specifically, a binding fixes the topic; a stored result fixes the outcome.
+There is no durable intent checkpoint before that outcome is stored.
+
+## Historical review and provisioning attempt
+
 Reviewed baseline: `98bbcd09bfe4afa1ac96deed8d14b015d340efb4`.
 Reviewed initial hotfix: `adf6111c7c17fb141ee6e2741790a44d7c4470ef`.
 The complete diff (all 13 files) and the underlying schema, transactions, router,
@@ -103,7 +133,7 @@ URLs to its newly created test databases. Run the integration tests and full sui
 then remove only that container and its dedicated storage. No production endpoint
 or volume is needed. Push/PR/production-test approval remains pending this gate.
 
-## Final local validation
+## Historical local validation (before the successful PostgreSQL gate)
 
 - Full pytest suite: **183 passed, 13 skipped**. All 13 skips require PostgreSQL
   (one existing smoke plus twelve newly parameterized retry scenarios).

@@ -146,3 +146,42 @@ def test_untrusted_exception_fields_are_not_formatted(monkeypatch, caplog):
         telegram_bot.run_polling(Mock(), transport)
     assert "error=LLMProviderError" in caplog.text
     assert "http_status=unknown" in caplog.text
+
+
+def test_malformed_routing_response_retries_without_offset_or_log_leak(monkeypatch, caplog):
+    from tests.test_llm_provider import provider, routing_response
+    from tests.test_telegram_adapter import adapter_for
+
+    adapter, _, store, _, _, _, _, _ = adapter_for()
+    adapter.router.model = provider()
+    payloads = iter(
+        [
+            {
+                "action": "switch_to_existing",
+                "conversation_id": 123,
+                "suggested_title": "PRIVATE_PROVIDER_TEXT",
+                "confidence": 0.9,
+            },
+            {
+                "action": "continue_current",
+                "conversation_id": None,
+                "suggested_title": "Synthetic",
+                "confidence": 0.9,
+            },
+        ]
+    )
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(next(payloads)))
+    transport = Mock()
+    transport.call.side_effect = [[update()], [update()], StopPolling()]
+    sleeps = []
+    monkeypatch.setattr(telegram_bot.time, "sleep", sleeps.append)
+    with pytest.raises(StopPolling):
+        telegram_bot.run_polling(adapter, transport)
+    assert [c.args[1]["offset"] for c in transport.call.call_args_list] == [0, 0, 2]
+    assert sleeps == [3]
+    assert len(store.state.conversations) == 1
+    assert "error=LLMResponseError" in caplog.text
+    assert "phase=process_message" in caplog.text
+    assert "PRIVATE" not in caplog.text
+    assert "secret" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

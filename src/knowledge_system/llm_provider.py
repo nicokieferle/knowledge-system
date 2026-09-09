@@ -145,16 +145,29 @@ class OpenAICompatibleProvider:
             ]
         )
         try:
-            action = ConversationRoutingAction(data["action"])
+            raw_action = data["action"]
             raw_id = data.get("conversation_id")
+            title = data.get("suggested_title")
+            confidence = data["confidence"]
+            # Validate JSON types before UUID/float conversion. In particular, bool
+            # is an int subclass and UUID(non-string) can raise AttributeError.
+            if not isinstance(raw_action, str):
+                raise TypeError
+            if raw_id is not None and not isinstance(raw_id, str):
+                raise TypeError
+            if title is not None and not isinstance(title, str):
+                raise TypeError
+            if type(confidence) not in (int, float):
+                raise TypeError
+            action = ConversationRoutingAction(raw_action)
             return ConversationRoutingDecision(
                 action,
-                UUID(raw_id) if raw_id else None,
-                data.get("suggested_title"),
-                float(data["confidence"]),
+                UUID(raw_id) if raw_id is not None else None,
+                title,
+                float(confidence),
             )
-        except (KeyError, ValueError, TypeError) as exc:
-            raise LLMResponseError("LLM returned an invalid routing decision") from exc
+        except (KeyError, ValueError, TypeError, OverflowError):
+            raise LLMResponseError("LLM returned an invalid routing decision") from None
 
     def generate_proposal(self, context: ProposalGenerationContext) -> ProposalDraft:
         data = self._json(

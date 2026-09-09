@@ -1,5 +1,9 @@
 # V3.1.1 Telegram retry diagnostics
 
+Validation update: the subsequent gate on `10512691a61dcfd0c411c05afa0be624a34b8b4e`
+passed all 13 PostgreSQL 17.11 integration tests and all 196 full-suite tests,
+with zero failures/skips. Earlier counts below are historical intermediate results.
+
 ## Observed incident and limits
 
 The reported V3.1 production log repeats `Telegram polling cycle failed; retrying`
@@ -44,6 +48,10 @@ update or combines PostgreSQL with Telegram delivery.
 - Replay stored proposals, suggestions and assistant responses before model calls.
   Recover a suggestion committed before its assistant insert. This prevents a new
   classifier result from changing an already persisted outcome on a serial retry.
+
+  Processing becomes deterministic once the relevant durable binding/result exists.
+  Classification before result persistence may be repeated after a failure.
+  The binding fixes the topic, not an unfinished intent-classification result.
 - Replay the proposal for the same confirmation message before retrieval/generation
   when a callback acknowledgement failed after commit.
 

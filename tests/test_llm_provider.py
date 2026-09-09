@@ -4,6 +4,7 @@ import io
 import json
 import urllib.error
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 
@@ -106,3 +107,91 @@ def test_invalid_completion_envelope_is_response_error(monkeypatch, body):
     with pytest.raises(LLMResponseError) as caught:
         provider().route("private", ())
     assert "private" not in str(caught.value)
+
+
+def routing_response(payload):
+    return Response(
+        json.dumps({"choices": [{"message": {"content": json.dumps(payload)}}]}).encode()
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("conversation_id", "not-a-uuid-PRIVATE"),
+        ("conversation_id", ""),
+        ("conversation_id", 123),
+        ("conversation_id", 0),
+        ("conversation_id", 1.5),
+        ("conversation_id", True),
+        ("conversation_id", False),
+        ("conversation_id", {"PRIVATE": "value"}),
+        ("conversation_id", []),
+        ("action", "PRIVATE"),
+        ("action", None),
+        ("action", 1),
+        ("action", True),
+        ("action", {}),
+        ("action", []),
+        ("confidence", "0.9"),
+        ("confidence", "PRIVATE"),
+        ("confidence", None),
+        ("confidence", True),
+        ("confidence", []),
+        ("confidence", {}),
+        ("confidence", -0.1),
+        ("confidence", 1.1),
+        ("confidence", float("nan")),
+        ("confidence", float("inf")),
+        ("confidence", 10**400),
+        ("suggested_title", 123),
+        ("suggested_title", True),
+        ("suggested_title", []),
+        ("suggested_title", {"PRIVATE": "value"}),
+    ],
+)
+def test_invalid_routing_field_types_are_controlled(monkeypatch, field, value):
+    payload = {
+        "action": "continue_current",
+        "conversation_id": None,
+        "suggested_title": None,
+        "confidence": 0.9,
+    }
+    payload[field] = value
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(payload))
+    with pytest.raises(LLMResponseError) as caught:
+        provider().route("PRIVATE_MESSAGE", ())
+    assert str(caught.value) == "LLM returned an invalid routing decision"
+    assert caught.value.__suppress_context__ is True
+
+
+@pytest.mark.parametrize("missing", ["action", "confidence"])
+def test_missing_routing_fields_are_controlled(monkeypatch, missing):
+    payload = {"action": "continue_current", "confidence": 0.9}
+    del payload[missing]
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(payload))
+    with pytest.raises(LLMResponseError):
+        provider().route("PRIVATE_MESSAGE", ())
+
+
+@pytest.mark.parametrize(
+    "action,raw_id,title,confidence",
+    [
+        ("continue_current", None, None, 0.9),
+        ("start_new_conversation", None, "Synthetic title", 1),
+        ("switch_to_existing", "d36a229a-3b4e-40f3-aeca-928db94ce468", None, 0.5),
+    ],
+)
+def test_valid_routing_fields(monkeypatch, action, raw_id, title, confidence):
+    payload = {
+        "action": action,
+        "conversation_id": raw_id,
+        "suggested_title": title,
+        "confidence": confidence,
+    }
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(payload))
+    decision = provider().route("Synthetic", ())
+    assert decision.action.value == action
+    assert decision.conversation_id == (UUID(raw_id) if raw_id else None)
+    assert decision.suggested_title == title
+    assert decision.confidence == confidence
