@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from knowledge_system.client_state import ClientIdentity
 from knowledge_system.conversation_models import (
     ConversationIntent,
@@ -48,6 +50,122 @@ def test_normal_message_retry_and_restart_keep_topic_and_one_message():
     ]
     assert len(user_messages) == 1
     assert len(assistant_messages) == 1
+
+
+@pytest.mark.parametrize(
+    "intent,text",
+    [
+        (ConversationIntent.CHAT, "Hallo"),
+        (ConversationIntent.SUGGEST_PROPOSAL, "Insight"),
+        (ConversationIntent.CREATE_PROPOSAL, "/remember insight"),
+    ],
+)
+def test_send_failure_replays_durable_result_without_model_or_duplicates(intent, text):
+    adapter, service, store, states, transport, proposals, classifier, chat = adapter_for(intent)
+    original_send = transport.send_message
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("send failed")
+
+    transport.send_message = fail
+    message = TelegramMessage("10", "20", "30", text)
+    with pytest.raises(RuntimeError):
+        adapter.handle_message(message)
+    classifier.classify = fail
+    chat.generate = fail
+    adapter.router.model.route = fail
+    service.proposal_service.generator.generate = fail
+    transport.send_message = original_send
+    restarted = TelegramAdapter(adapter.router, service, states, transport)
+    restarted.handle_message(message)
+    restarted.handle_message(message)
+    assert len(store.state.conversations) == 1
+    messages = next(iter(store.state.messages.values()))
+    assert len([m for m in messages if m.role.value == "user"]) == 1
+    assert len([m for m in messages if m.role.value == "assistant"]) == (
+        0 if text.startswith("/remember") else 1
+    )
+    assert len(proposals.state.suggestions) == (
+        1 if intent is ConversationIntent.SUGGEST_PROPOSAL else 0
+    )
+    assert len(proposals.state.proposals) == (
+        1 if intent is ConversationIntent.CREATE_PROPOSAL else 0
+    )
+    assert transport.messages[0] == transport.messages[1]
+
+
+@pytest.mark.parametrize("action", ["save", "reject"])
+def test_callback_delivery_failure_retry(action):
+    adapter, service, store, _, transport, proposals, _, _ = adapter_for(
+        ConversationIntent.SUGGEST_PROPOSAL
+    )
+    adapter.handle_message(TelegramMessage("10", "20", "30", "Insight"))
+    sid = next(iter(proposals.state.suggestions))
+    callback = TelegramCallback("cb-1", "10", "20", "99", f"{action}:{sid}")
+    original = transport.answer_callback
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("delivery failed")
+
+    transport.answer_callback = fail
+    with pytest.raises(RuntimeError):
+        adapter.handle_callback(callback)
+    service.proposal_service.generator.generate = fail
+    transport.answer_callback = original
+    adapter.handle_callback(callback)
+    assert len(proposals.state.proposals) == (1 if action == "save" else 0)
+    messages = next(iter(store.state.messages.values()))
+    assert len([m for m in messages if m.external_message_id == "telegram:callback:cb-1"]) == 1
+
+
+def test_new_command_retry_reuses_bound_topic():
+    adapter, _, store, _, _, _, _, _ = adapter_for()
+    message = TelegramMessage("10", "20", "30", "/new Notes")
+    adapter.handle_message(message)
+    adapter.handle_message(message)
+    assert len(store.state.conversations) == 1
+
+
+def test_retry_recovers_suggestion_committed_before_assistant_failure():
+    adapter, _, store, _, _, proposals, classifier, _ = adapter_for(
+        ConversationIntent.SUGGEST_PROPOSAL
+    )
+    original = store.add_message
+
+    def fail_assistant(conversation_id, role, *args, **kwargs):
+        if role.value == "assistant":
+            raise RuntimeError("DB unavailable")
+        return original(conversation_id, role, *args, **kwargs)
+
+    store.add_message = fail_assistant
+    message = TelegramMessage("10", "20", "30", "Insight")
+    with pytest.raises(RuntimeError):
+        adapter.handle_message(message)
+    assert len(proposals.state.suggestions) == 1
+    store.add_message = original
+    classifier.intent = ConversationIntent.CREATE_PROPOSAL
+    adapter.handle_message(message)
+    assert len(classifier.calls) == 1
+    assert len(proposals.state.suggestions) == 1
+    assert len(proposals.state.proposals) == 0
+    assert len(next(iter(store.state.messages.values()))) == 2
+
+
+def test_classifier_failure_retries_one_user_message_in_original_topic():
+    adapter, _, store, _, _, _, classifier, _ = adapter_for()
+    original = classifier.classify
+
+    def fail(*args):
+        raise RuntimeError("provider failed")
+
+    classifier.classify = fail
+    message = TelegramMessage("10", "20", "30", "Insight")
+    with pytest.raises(RuntimeError):
+        adapter.handle_message(message)
+    classifier.classify = original
+    adapter.handle_message(message)
+    assert len(store.state.conversations) == 1
+    assert len(next(iter(store.state.messages.values()))) == 2
 
 
 def test_topics_new_and_switch_are_manual():

@@ -87,9 +87,15 @@ def build_adapter() -> tuple[TelegramAdapter, TelegramHTTPTransport]:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     adapter, transport = build_adapter()
+    run_polling(adapter, transport)
+
+
+def run_polling(adapter: TelegramAdapter, transport: TelegramHTTPTransport) -> None:
     offset = 0
+    retry_delay = 3
     LOG.info("Telegram long-polling client started")
     while True:
+        phase = "poll"
         try:
             updates = transport.call(
                 "getUpdates",
@@ -97,6 +103,7 @@ def main() -> None:
             )
             for update in updates:
                 if message := update.get("message"):
+                    phase = "process_message"
                     if text := message.get("text"):
                         adapter.handle_message(
                             TelegramMessage(
@@ -107,6 +114,7 @@ def main() -> None:
                             )
                         )
                 elif callback := update.get("callback_query"):
+                    phase = "process_callback"
                     message = callback.get("message")
                     if message and callback.get("data"):
                         adapter.handle_callback(
@@ -120,10 +128,29 @@ def main() -> None:
                         )
                 # Advance only after durable handling; provider/DB failures retry this update.
                 offset = max(offset, int(update["update_id"]) + 1)
-        except (urllib.error.URLError, TimeoutError, LLMProviderError, psycopg.Error, RuntimeError):
-            # Do not log tokens, updates, message text, or provider prompts.
-            LOG.warning("Telegram polling cycle failed; retrying")
-            time.sleep(3)
+                retry_delay = 3
+            retry_delay = 3
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            LLMProviderError,
+            psycopg.Error,
+            RuntimeError,
+        ) as exc:
+            # Never render arbitrary exception messages or tracebacks: they can contain
+            # request URLs, SQL parameters or prompts. Class names suffice for diagnosis.
+            status = exc.code if isinstance(exc, urllib.error.HTTPError) else None
+            if isinstance(exc, LLMProviderError):
+                status = exc.http_status
+            LOG.warning(
+                "Telegram polling cycle failed error=%s phase=%s http_status=%s retry_seconds=%s",
+                type(exc).__name__,
+                phase,
+                status if type(status) is int else "unknown",
+                retry_delay,
+            )
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)
 
 
 if __name__ == "__main__":

@@ -21,6 +21,10 @@ class MessageNotFoundError(LookupError):
 
 
 class ConversationStore(Protocol):
+    def find_external_message(
+        self, conversation_id: UUID, external_message_id: str
+    ) -> Message | None: ...
+
     def create_conversation(
         self,
         client_type: str,
@@ -76,6 +80,18 @@ class PostgresConversationStore:
     ) -> None:
         self.settings = settings
         self._connect = connection_factory
+
+    def find_external_message(
+        self, conversation_id: UUID, external_message_id: str
+    ) -> Message | None:
+        with self._connect(self.settings) as conn:
+            row = conn.execute(
+                """SELECT id, conversation_id, role, content, created_at,
+                          external_message_id, metadata FROM messages
+                   WHERE conversation_id = %s AND external_message_id = %s""",
+                (conversation_id, external_message_id),
+            ).fetchone()
+        return _message_from_row(row) if row else None
 
     def create_conversation(
         self,

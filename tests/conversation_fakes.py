@@ -57,6 +57,16 @@ class ConversationState:
 
 
 class FakeConversationStore:
+    def find_external_message(self, conversation_id, external_message_id):
+        return next(
+            (
+                m
+                for m in self.list_messages(conversation_id)
+                if m.external_message_id == external_message_id
+            ),
+            None,
+        )
+
     def __init__(self, state: ConversationState | None = None) -> None:
         self.state = state or ConversationState()
         self.force_summary_conflict = False
@@ -193,6 +203,28 @@ class ProposalState:
 
 
 class FakeProposalStore:
+    def find_proposal(self, conversation_id, trigger_message_id):
+        return next(
+            (
+                p
+                for p in self.state.proposals.values()
+                if p.conversation_id == conversation_id
+                and p.trigger_message_id == trigger_message_id
+            ),
+            None,
+        )
+
+    def find_suggestion(self, conversation_id, trigger_message_id):
+        return next(
+            (
+                s
+                for s in self.state.suggestions.values()
+                if s.conversation_id == conversation_id
+                and s.trigger_message_id == trigger_message_id
+            ),
+            None,
+        )
+
     def __init__(self, state: ProposalState | None = None) -> None:
         self.state = state or ProposalState()
         self.fail_confirmation_once = False

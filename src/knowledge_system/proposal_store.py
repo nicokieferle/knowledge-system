@@ -37,6 +37,12 @@ class ProposalCreate:
 
 
 class ProposalStore(Protocol):
+    def find_proposal(self, conversation_id: UUID, trigger_message_id: int) -> Proposal | None: ...
+
+    def find_suggestion(
+        self, conversation_id: UUID, trigger_message_id: int
+    ) -> ProposalSuggestion | None: ...
+
     def create_proposal(self, proposal: ProposalCreate) -> Proposal: ...
 
     def create_suggestion(
@@ -81,6 +87,24 @@ class PostgresProposalStore:
     ) -> None:
         self.settings = settings
         self._connect = connection_factory
+
+    def find_proposal(self, conversation_id: UUID, trigger_message_id: int) -> Proposal | None:
+        with self._connect(self.settings) as conn:
+            row = conn.execute(
+                f"{_PROPOSAL_SELECT} WHERE conversation_id = %s AND trigger_message_id = %s",
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+        return _proposal_from_row(row) if row else None
+
+    def find_suggestion(
+        self, conversation_id: UUID, trigger_message_id: int
+    ) -> ProposalSuggestion | None:
+        with self._connect(self.settings) as conn:
+            row = conn.execute(
+                f"{_SUGGESTION_SELECT} WHERE conversation_id = %s AND trigger_message_id = %s",
+                (conversation_id, trigger_message_id),
+            ).fetchone()
+        return _suggestion_from_row(row) if row else None
 
     def create_proposal(self, proposal: ProposalCreate) -> Proposal:
         with self._connect(self.settings) as conn, conn.transaction():
