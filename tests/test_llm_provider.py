@@ -75,3 +75,34 @@ def test_timeout_and_rate_limit_are_sanitized(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(error))
     with pytest.raises(LLMRateLimitError, match="rate limit"):
         provider().route("private", ())
+
+
+def test_wrapped_timeout_is_distinguishable(monkeypatch):
+    error = urllib.error.URLError(TimeoutError("synthetic-private-prompt"))
+
+    def request(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr("urllib.request.urlopen", request)
+    with pytest.raises(LLMTimeoutError) as caught:
+        provider().route("private", ())
+    assert "synthetic-private-prompt" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"not-json-private",
+        b"{}",
+        b'{"choices": []}',
+        b'{"choices": [{"message": {"content": null}}]}',
+        b'{"choices": [{"message": {"content": {"private": "data"}}}]}',
+        b'{"choices": [{"message": {"content": "  "}}]}',
+        b"\xff",
+    ],
+)
+def test_invalid_completion_envelope_is_response_error(monkeypatch, body):
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: Response(body))
+    with pytest.raises(LLMResponseError) as caught:
+        provider().route("private", ())
+    assert "private" not in str(caught.value)

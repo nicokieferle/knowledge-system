@@ -218,7 +218,10 @@ class OpenAICompatibleProvider:
         try:
             with urllib.request.urlopen(request, timeout=self.config.timeout_seconds) as response:
                 result = json.load(response)
-            return str(result["choices"][0]["message"]["content"])
+            content = result["choices"][0]["message"]["content"]
+            if not isinstance(content, str) or not content.strip():
+                raise LLMResponseError("LLM returned invalid message content")
+            return content
         except urllib.error.HTTPError as exc:
             if exc.code == 429:
                 raise LLMRateLimitError(
@@ -229,8 +232,12 @@ class OpenAICompatibleProvider:
             ) from None
         except TimeoutError:
             raise LLMTimeoutError("LLM provider request timed out") from None
-        except (urllib.error.URLError, KeyError, IndexError, TypeError, json.JSONDecodeError):
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, TimeoutError):
+                raise LLMTimeoutError("LLM provider request timed out") from None
             raise LLMProviderError("LLM provider request failed") from None
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError, UnicodeDecodeError):
+            raise LLMResponseError("LLM returned an invalid response") from None
 
 
 class ProviderProposalGenerator:

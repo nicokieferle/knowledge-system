@@ -5,7 +5,12 @@ import psycopg
 import pytest
 
 from knowledge_system import telegram_bot
-from knowledge_system.llm_provider import LLMProviderError, LLMRateLimitError, LLMResponseError
+from knowledge_system.llm_provider import (
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMResponseError,
+    LLMTimeoutError,
+)
 
 
 class StopPolling(BaseException):
@@ -45,6 +50,7 @@ def update(number=1, callback=False):
         urllib.error.HTTPError("https://SECRET", 403, "SECRET", {}, None),
         RuntimeError("SECRET"),
         TimeoutError("SECRET"),
+        LLMTimeoutError("SECRET"),
     ],
 )
 @pytest.mark.parametrize("phase", ["poll", "process_message", "process_callback"])
@@ -96,3 +102,47 @@ def test_batch_keeps_successful_offset_when_next_update_fails(monkeypatch):
     with pytest.raises(StopPolling):
         telegram_bot.run_polling(adapter, transport)
     assert transport.call.call_args.args[1]["offset"] == 6
+
+
+def test_three_failures_success_success_failure_and_order(monkeypatch):
+    transport, adapter = Mock(), Mock()
+    first, second, third = update(1), update(2), update(3)
+    for number, item in enumerate((first, second, third), 1):
+        item["message"]["message_id"] = number
+    transport.call.side_effect = [[first, second]] * 4 + [[third], StopPolling()]
+    events = []
+    attempts = 0
+
+    def handle(message):
+        nonlocal attempts
+        attempts += 1
+        events.append(message.message_id)
+        if attempts in (1, 2, 3, 6):
+            raise LLMRateLimitError("safe")
+
+    adapter.handle_message.side_effect = handle
+    sleeps = []
+    monkeypatch.setattr(telegram_bot.time, "sleep", sleeps.append)
+    with pytest.raises(StopPolling):
+        telegram_bot.run_polling(adapter, transport)
+    assert sleeps == [3, 6, 12, 3]
+    assert [c.args[1]["offset"] for c in transport.call.call_args_list] == [0, 0, 0, 0, 3, 3]
+    assert events == ["1", "1", "1", "1", "2", "3"]
+
+
+def test_untrusted_exception_fields_are_not_formatted(monkeypatch, caplog):
+    class UnsafeText:
+        def __str__(self):
+            raise AssertionError("must not format exception data")
+
+        def __repr__(self):
+            raise AssertionError("must not format exception data")
+
+    error = LLMProviderError(UnsafeText(), http_status=UnsafeText())
+    transport = Mock()
+    transport.call.side_effect = [error, StopPolling()]
+    monkeypatch.setattr(telegram_bot.time, "sleep", lambda _: None)
+    with pytest.raises(StopPolling):
+        telegram_bot.run_polling(Mock(), transport)
+    assert "error=LLMProviderError" in caplog.text
+    assert "http_status=unknown" in caplog.text
