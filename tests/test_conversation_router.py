@@ -121,3 +121,37 @@ def test_manual_new_and_switch_bypass_model():
     selected = router.switch(identity, str(first.id))
     assert selected.id == first.id
     assert model.calls == []
+
+
+def test_provider_unoffered_switch_id_never_selects_another_clients_topic(monkeypatch):
+    from tests.test_llm_provider import provider, routing_response
+
+    store = FakeConversationStore()
+    states = FakeClientStates(store=store)
+    identity = ClientIdentity("telegram", "1", "2")
+    foreign_identity = ClientIdentity("telegram", "9", "9")
+    router = ConversationRouter(store, states, provider())
+    current = router.create(identity, "Current")
+    foreign = router.create(foreign_identity, "Foreign")
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *a, **k: routing_response(
+            {"action": "switch_to_existing", "conversation_id": str(foreign.id), "confidence": 0.9}
+        ),
+    )
+    result = router.route(identity, "Synthetic")
+    # Preserve the existing fail-closed fallback, not a cross-client switch.
+    assert result.conversation.id not in (current.id, foreign.id)
+    assert states.get(identity).active_conversation_id == result.conversation.id
+    assert states.get(foreign_identity).active_conversation_id == foreign.id
+
+
+@pytest.mark.parametrize(
+    "action",
+    [ConversationRoutingAction.CONTINUE_CURRENT, ConversationRoutingAction.START_NEW_CONVERSATION],
+)
+def test_domain_still_rejects_id_for_non_switch_actions(action):
+    from uuid import uuid4
+
+    with pytest.raises(ValueError, match="only valid when switching"):
+        ConversationRoutingDecision(action, uuid4(), confidence=0.9)
