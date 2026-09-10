@@ -134,7 +134,15 @@ class OpenAICompatibleProvider:
             [
                 {
                     "role": "system",
-                    "content": "Route konservativ wie getrennte Chat-Themen. Folgefragen bleiben aktiv. Antworte nur JSON mit action (continue_current|switch_to_existing|start_new_conversation), conversation_id oder null, suggested_title oder null, confidence (0..1). Nutze nur angebotene IDs.",
+                    "content": (
+                        "Route konservativ wie getrennte Chat-Themen. Folgefragen bleiben aktiv. "
+                        "Antworte nur JSON mit action, conversation_id, suggested_title, confidence. "
+                        "continue_current: conversation_id MUSS null sein. "
+                        "switch_to_existing: conversation_id MUSS exakt eine angebotene candidate ID sein. "
+                        "start_new_conversation: conversation_id MUSS null sein. "
+                        "suggested_title ist nur bei start_new_conversation sinnvoll, sonst bevorzugt null. "
+                        "confidence MUSS eine Zahl zwischen 0 und 1 sein."
+                    ),
                 },
                 {
                     "role": "user",
@@ -160,9 +168,21 @@ class OpenAICompatibleProvider:
             if type(confidence) not in (int, float):
                 raise TypeError
             action = ConversationRoutingAction(raw_action)
+            conversation_id = UUID(raw_id) if raw_id is not None else None
+            if action is ConversationRoutingAction.CONTINUE_CURRENT and conversation_id is not None:
+                active = [c for c in candidates if c.is_active]
+                # Tolerate only a redundant ID for the unique active candidate.
+                # Ambiguous or contradictory candidates must not relax the domain invariant.
+                if (
+                    len(active) != 1
+                    or active[0].conversation_id != conversation_id
+                    or sum(c.conversation_id == conversation_id for c in candidates) != 1
+                ):
+                    raise ValueError
+                conversation_id = None
             return ConversationRoutingDecision(
                 action,
-                UUID(raw_id) if raw_id is not None else None,
+                conversation_id,
                 title,
                 float(confidence),
             )

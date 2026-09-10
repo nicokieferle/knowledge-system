@@ -4,7 +4,7 @@ import io
 import json
 import urllib.error
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -195,3 +195,73 @@ def test_valid_routing_fields(monkeypatch, action, raw_id, title, confidence):
     assert decision.conversation_id == (UUID(raw_id) if raw_id else None)
     assert decision.suggested_title == title
     assert decision.confidence == confidence
+
+
+@pytest.mark.parametrize(
+    "case,action,id_kind,accepted",
+    [
+        ("active", "continue_current", "active", True),
+        ("active", "continue_current", "other", False),
+        ("inactive", "continue_current", "active", False),
+        ("active", "continue_current", "unoffered", False),
+        ("empty", "continue_current", "active", False),
+        ("two_active", "continue_current", "active", False),
+        ("duplicate_active", "continue_current", "active", False),
+        ("conflicting_duplicate", "continue_current", "active", False),
+        ("active", "continue_current", "null", True),
+        ("active", "switch_to_existing", "other", True),
+        ("active", "start_new_conversation", "null", True),
+        ("active", "start_new_conversation", "active", False),
+    ],
+)
+def test_routing_normalizes_only_unique_redundant_active_id(
+    monkeypatch, case, action, id_kind, accepted
+):
+    active_id, other_id = uuid4(), uuid4()
+    active = ConversationTopic(active_id, "Active", None, datetime.now(UTC), case != "inactive")
+    other = ConversationTopic(other_id, "Other", None, datetime.now(UTC), case == "two_active")
+    candidates = (active, other)
+    if case == "empty":
+        candidates = ()
+    elif case == "duplicate_active":
+        candidates += (active,)
+    elif case == "conflicting_duplicate":
+        candidates += (ConversationTopic(active_id, "Conflicting", None, datetime.now(UTC)),)
+    raw_id = {
+        "active": str(active_id),
+        "other": str(other_id),
+        "unoffered": str(uuid4()),
+        "null": None,
+    }[id_kind]
+    payload = {
+        "action": action,
+        "conversation_id": raw_id,
+        "suggested_title": None,
+        "confidence": 0.9,
+    }
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(payload))
+    if not accepted:
+        with pytest.raises(LLMResponseError, match="^LLM returned an invalid routing decision$"):
+            provider().route("Synthetic", candidates)
+        return
+    decision = provider().route("Synthetic", candidates)
+    assert decision.action.value == action
+    assert decision.conversation_id == (other_id if action == "switch_to_existing" else None)
+    assert decision.confidence == 0.9
+
+
+def test_routing_prompt_defines_action_specific_id_contract(monkeypatch):
+    def request(req, **kwargs):
+        system = json.loads(req.data)["messages"][0]["content"]
+        assert "continue_current: conversation_id MUSS null sein" in system
+        assert (
+            "switch_to_existing: conversation_id MUSS exakt eine angebotene candidate ID sein"
+            in system
+        )
+        assert "start_new_conversation: conversation_id MUSS null sein" in system
+        assert "suggested_title" in system and "sonst bevorzugt null" in system
+        assert "confidence MUSS eine Zahl zwischen 0 und 1 sein" in system
+        return routing_response({"action": "continue_current", "confidence": 0.9})
+
+    monkeypatch.setattr("urllib.request.urlopen", request)
+    provider().route("Synthetic", ())

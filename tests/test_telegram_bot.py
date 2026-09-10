@@ -185,3 +185,59 @@ def test_malformed_routing_response_retries_without_offset_or_log_leak(monkeypat
     assert "PRIVATE" not in caplog.text
     assert "secret" not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_redundant_active_routing_id_binds_original_topic_and_advances_offset(monkeypatch):
+    import json
+
+    from knowledge_system.client_state import ClientIdentity
+    from knowledge_system.telegram_adapter import TelegramMessage
+    from tests.test_llm_provider import provider, routing_response
+    from tests.test_telegram_adapter import adapter_for
+
+    adapter, _, store, states, delivery, _, _, chat = adapter_for()
+    identity = ClientIdentity("telegram", "1", "2")
+    topics = [adapter.router.create(identity, f"Synthetic topic {i}") for i in range(4)]
+    active = topics[1]
+    states.activate(identity, active.id)
+    adapter.router.model = provider()
+    requests = []
+
+    def request(req, **kwargs):
+        candidates = json.loads(json.loads(req.data)["messages"][1]["content"])["candidates"]
+        assert len(candidates) == 4
+        assert [c["id"] for c in candidates if c["active"]] == [str(active.id)]
+        requests.append(req)
+        return routing_response(
+            {
+                "action": "continue_current",
+                "conversation_id": str(active.id),
+                "suggested_title": None,
+                "confidence": 0.9,
+            }
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", request)
+    transport = Mock()
+    transport.call.side_effect = [[update()], StopPolling()]
+    sleeps = []
+    monkeypatch.setattr(telegram_bot.time, "sleep", sleeps.append)
+    assert states.get_message_binding(identity, "3") is None
+    with pytest.raises(StopPolling):
+        telegram_bot.run_polling(adapter, transport)
+    assert sleeps == []
+    assert [c.args[1]["offset"] for c in transport.call.call_args_list] == [0, 2]
+    assert states.get_message_binding(identity, "3") == active.id
+    assert states.get(identity).active_conversation_id == active.id
+    assert set(store.state.conversations) == {t.id for t in topics}
+    assert len(store.list_messages(active.id)) == 2
+    assert len(chat.contexts) == 1
+    assert len(delivery.messages) == 1
+    # A repeated update reuses the durable binding/result even if another topic is active.
+    states.activate(identity, topics[2].id)
+    adapter.handle_message(TelegramMessage("1", "2", "3", "PRIVATE_MESSAGE"))
+    assert states.get_message_binding(identity, "3") == active.id
+    assert len(requests) == 1
+    assert len(chat.contexts) == 1
+    assert len(store.list_messages(active.id)) == 2
+    assert set(store.state.conversations) == {t.id for t in topics}
