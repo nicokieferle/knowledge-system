@@ -265,3 +265,15 @@ def test_routing_prompt_defines_action_specific_id_contract(monkeypatch):
 
     monkeypatch.setattr("urllib.request.urlopen", request)
     provider().route("Synthetic", ())
+
+
+@pytest.mark.parametrize("value", [None, 1, True, {}, [], ""])
+def test_proposal_content_must_be_real_text(monkeypatch, value):
+    from knowledge_system.conversation_models import ProposalGenerationContext, ProposalTriggerType
+
+    payload = {"summary": "summary", "reason": "reason", "proposed_content": value}
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: routing_response(payload))
+    with pytest.raises(LLMResponseError, match="invalid proposal"):
+        provider().generate_proposal(
+            ProposalGenerationContext(uuid4(), 1, ProposalTriggerType.COMMAND, None, (), ())
+        )

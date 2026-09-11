@@ -17,9 +17,12 @@ from .conversation_router import ConversationRouter
 from .conversation_service import ConversationService
 from .conversation_store import PostgresConversationStore
 from .llm_provider import LLMProviderError, OpenAICompatibleConfig, OpenAICompatibleProvider
+from .proposal_review import ProposalReviewService
 from .proposal_service import ProposalService
 from .proposal_store import PostgresProposalStore
+from .review_store import PostgresReviewStore
 from .service import KnowledgeService
+from .sources import GitMarkdownSource
 from .telegram_adapter import TelegramAdapter, TelegramCallback, TelegramMessage
 
 LOG = logging.getLogger(__name__)
@@ -80,7 +83,13 @@ def build_adapter() -> tuple[TelegramAdapter, TelegramHTTPTransport]:
     )
     transport = TelegramHTTPTransport(chat.telegram_bot_token)
     return TelegramAdapter(
-        ConversationRouter(conversations, states, provider), service, states, transport
+        ConversationRouter(conversations, states, provider),
+        service,
+        states,
+        transport,
+        review_service=ProposalReviewService(
+            PostgresReviewStore(settings), GitMarkdownSource(settings.knowledge_root)
+        ),
     ), transport
 
 

@@ -194,7 +194,18 @@ class OpenAICompatibleProvider:
             [
                 {
                     "role": "system",
-                    "content": "Erzeuge einen reviewbaren Wissensvorschlag, niemals einen direkten Write. JSON-Felder: summary, reason, proposed_content, title, target_source_id, target_source_path, base_revision.",
+                    "content": (
+                        "Erzeuge einen reviewbaren Wissensvorschlag, niemals einen direkten Write. "
+                        "JSON-Felder: summary, reason, proposed_content, title, target_source_id, "
+                        "target_source_path, base_revision. proposed_content MUSS die vollständige "
+                        "neue Markdown-Datei sein, kein Patch und keine Änderungsanweisung. "
+                        "target_source_id ist knowledge-git; target_source_path ist ein eindeutiger "
+                        "relativer .md-Pfad innerhalb der Wissensquelle, ohne knowledge/-Präfix, "
+                        "Traversal oder versteckte Komponenten. Erhalte bestehende Aussagen und "
+                        "Provenienz; erfinde keinen bestehenden Dateiinhalt. Bei unklarem Ziel "
+                        "liefere null als target_source_path für manuelle Vorbereitung. "
+                        "base_revision MUSS null sein; die Review-Schicht bestimmt die reale Basis."
+                    ),
                 },
                 {
                     "role": "user",
@@ -209,17 +220,23 @@ class OpenAICompatibleProvider:
             ]
         )
         try:
+            for field in ("summary", "reason", "proposed_content"):
+                if not isinstance(data[field], str) or not data[field].strip():
+                    raise TypeError
+            for field in ("title", "target_source_id", "target_source_path", "base_revision"):
+                if data.get(field) is not None and not isinstance(data[field], str):
+                    raise TypeError
             return ProposalDraft(
-                summary=str(data["summary"]),
-                reason=str(data["reason"]),
-                proposed_content=str(data["proposed_content"]),
+                summary=data["summary"],
+                reason=data["reason"],
+                proposed_content=data["proposed_content"],
                 title=data.get("title"),
                 target_source_id=data.get("target_source_id"),
                 target_source_path=data.get("target_source_path"),
                 base_revision=data.get("base_revision"),
             )
-        except (KeyError, TypeError) as exc:
-            raise LLMResponseError("LLM returned an invalid proposal") from exc
+        except (KeyError, TypeError):
+            raise LLMResponseError("LLM returned an invalid proposal") from None
 
     # ProposalGenerator uses generate(); Python cannot overload it alongside ChatModel. The
     # small wrapper below exposes the expected port while sharing this provider transport.

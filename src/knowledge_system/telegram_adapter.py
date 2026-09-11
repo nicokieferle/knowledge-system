@@ -9,6 +9,7 @@ from .conversation_models import ConversationAction, ConversationTurnResult
 from .conversation_router import ConversationRouter
 from .conversation_service import ConversationService
 from .conversation_store import ConversationNotFoundError
+from .proposal_review import ProposalReviewService
 from .proposal_store import ProposalSuggestionNotFoundError, ProposalSuggestionStateError
 
 
@@ -46,13 +47,20 @@ class TelegramAdapter:
         service: ConversationService,
         states: ClientStateStore,
         transport: TelegramTransport,
+        review_service: ProposalReviewService | None = None,
     ) -> None:
         self.router, self.service, self.states, self.transport = router, service, states, transport
+        from .telegram_review import TelegramReview
+
+        self.review = TelegramReview(review_service, states, transport) if review_service else None
 
     def handle_message(self, message: TelegramMessage) -> None:
         identity = ClientIdentity("telegram", message.chat_id, message.user_id)
         text = message.text.strip()
         command, _, argument = text.partition(" ")
+        if command in ("/proposals", "/proposal", "/proposal-refresh") and self.review:
+            self.review.command(identity, command, argument.strip())
+            return
         if command == "/new":
             bound_id = self.states.get_message_binding(identity, message.message_id)
             if bound_id is None:
@@ -93,6 +101,9 @@ class TelegramAdapter:
 
     def handle_callback(self, callback: TelegramCallback) -> None:
         identity = ClientIdentity("telegram", callback.chat_id, callback.user_id)
+        if callback.data.startswith(("rv:", "pv:")) and self.review:
+            self.review.callback(identity, callback.callback_id, callback.data)
+            return
         try:
             action, raw_suggestion = callback.data.split(":", 1)
             suggestion_id = UUID(raw_suggestion)
