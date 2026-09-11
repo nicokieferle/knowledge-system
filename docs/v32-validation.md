@@ -6,8 +6,8 @@ remained unchanged. This is development validation, not a production rollout.
 
 ## Results
 
-- Full Windows suite with all three PostgreSQL opt-ins: **317 passed, 3 skipped**
-  (33.23 seconds on the final follow-up run).
+- Full Windows suite with all three PostgreSQL opt-ins: **321 passed, 3 skipped**
+  (32.19 seconds on the document-delivery follow-up run).
 - All **28 PostgreSQL integration cases** executed, including 15 V3.2 cases and
   the 13 existing conversation/retry cases. No PostgreSQL skips or failures.
 - PostgreSQL **17.11**, isolated local Docker test container, loopback-only port,
@@ -59,13 +59,22 @@ unchanged V3.1.2 constraint with no review table left behind.
   Windows junctions, aliases, traversal, hidden and nonportable paths.
 - Made CR/tab/backslash differences visible and rejected invisible control
   characters. Full old/new bytes remain stored; the display diff is not an apply patch.
-- Sent decision buttons only after complete bounded diff delivery. Legacy invalid
+- Sent decision buttons only after complete diff/document delivery. Legacy invalid
   targets allow Reject/Defer but never Accept; refresh is explicit.
 - Included both new durable tables in backup, restore and fingerprint coverage.
 - Removed stale documentation claims and typed the Telegram review boundary.
 
 No remaining blocker was identified in this self-review. Independent external
 review is still required before merge or a separately authorized rollout.
+
+The document-delivery follow-up replaces large inline bursts with one in-memory
+`sendDocument` upload. Inline eligibility counts the header plus complete diff in
+UTF-16 units against 3000; larger diffs retain exact `diff.encode("utf-8")` bytes.
+A review display uses at most three Telegram calls: compact summary, full inline
+diff or one document, then revision-bound buttons. Multipart parsing tests verify
+field names, safe filename, MIME type, exact bytes and regeneration when a boundary
+candidate collides with the private payload. A failed document upload sends no
+buttons. Retrying can duplicate the document but reuses the immutable revision.
 
 ## Remaining limits and V3.3 obligations
 
@@ -77,7 +86,7 @@ review is still required before merge or a separately authorized rollout.
   to 128,000 UTF-8 bytes. Invalid legacy drafts need correction through the trusted
   service API; Telegram is not a Markdown editor.
 - Telegram delivery remains at-least-once, so retries can duplicate preview
-  messages. `/proposals` currently lists at most 100 open/deferred items.
+  messages or documents. `/proposals` currently lists at most 100 open/deferred items.
 - New durable tools require the migrated schema. Restore old archives with the
   matching old schema/tools before migrating; fingerprints are version-specific.
 - No live Telegram/LLM E2E, production migration, server access, deployment or

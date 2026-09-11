@@ -17,10 +17,14 @@ from tests.test_conversation_service import _service
 class FakeTransport:
     def __init__(self):
         self.messages = []
+        self.documents = []
         self.callbacks = []
 
     def send_message(self, chat_id, text, buttons=()):
         self.messages.append((chat_id, text, buttons))
+
+    def send_document(self, chat_id, filename, content, mime_type="text/x-diff"):
+        self.documents.append((chat_id, filename, content, mime_type))
 
     def answer_callback(self, callback_id, text):
         self.callbacks.append((callback_id, text))

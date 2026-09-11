@@ -11,8 +11,9 @@ Telegram commands:
 
 - `/proposals`: up to 100 open/deferred proposals of the current owned topic.
 - `/proposal <uuid>`: show an existing revision, or safely prepare the first one.
-  The full diff is split into bounded messages; revision-bound buttons follow only
-  after all preview messages were sent.
+  A small full diff is shown inline; a larger diff is sent once as an in-memory
+  UTF-8 `.diff` document. Revision-bound buttons follow only after the complete
+  inline diff or document was transferred successfully.
 - `/proposal-refresh <uuid>`: explicitly prepare/show a fresh revision from the draft
   and current source. Old revisions remain intact; old Accept buttons cannot accept it.
 

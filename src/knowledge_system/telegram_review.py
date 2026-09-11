@@ -14,8 +14,15 @@ if TYPE_CHECKING:
     from .proposal_review import ProposalReviewService
     from .telegram_adapter import TelegramTransport
 
+TELEGRAM_TEXT_UTF16_LIMIT = 3000
+DIFF_HEADER = "Diff (\\r, \\t und \\\\ sind sichtbar escaped):\n"
 
-def chunks(text: str, limit: int = 3000) -> Iterator[str]:
+
+def utf16_units(text: str) -> int:
+    return sum(2 if ord(character) > 0xFFFF else 1 for character in text)
+
+
+def chunks(text: str, limit: int = TELEGRAM_TEXT_UTF16_LIMIT) -> Iterator[str]:
     # Telegram counts UTF-16 units; astral code points require two units.
     part, size = [], 0
     for c in text:
@@ -27,6 +34,17 @@ def chunks(text: str, limit: int = 3000) -> Iterator[str]:
         size += units
     if part:
         yield "".join(part)
+
+
+def truncate_utf16(text: str, limit: int) -> str:
+    if utf16_units(text) <= limit:
+        return text
+    marker = "…"
+    return next(chunks(text, limit - utf16_units(marker))) + marker
+
+
+def diff_is_inline(diff: str) -> bool:
+    return utf16_units(DIFF_HEADER + diff) <= TELEGRAM_TEXT_UTF16_LIMIT
 
 
 class TelegramReview:
@@ -64,11 +82,12 @@ class TelegramReview:
                     if view.revision is not None:
                         raise
                     p = view.proposal
-                    for part in chunks(
-                        f"{p.summary}\nGrund: {p.reason}\nStatus: {p.status}\n"
-                        "Kein reviewbarer Entwurf. Ziel/Inhalt muss korrigiert werden."
-                    ):
-                        self.transport.send_message(identity.external_chat_id, part)
+                    self.transport.send_message(
+                        identity.external_chat_id,
+                        f"{truncate_utf16(p.summary, 400)}\n"
+                        f"Grund: {truncate_utf16(p.reason, 800)}\nStatus: {p.status}\n"
+                        "Kein reviewbarer Entwurf. Ziel/Inhalt muss korrigiert werden.",
+                    )
                     self.transport.send_message(
                         identity.external_chat_id,
                         "Ohne Review kein Accept.",
@@ -78,15 +97,23 @@ class TelegramReview:
             if view.revision is None:
                 raise ReviewMissing()
             p, r = view.proposal, view.revision
-            text = (
-                f"{p.title or p.summary}\nGrund: {p.reason}\nStatus: {p.status}\n"
+            summary = (
+                f"{truncate_utf16(p.title or p.summary, 400)}\n"
+                f"Grund: {truncate_utf16(p.reason, 800)}\nStatus: {p.status}\n"
                 f"Ziel: {r.content.target_source_path}\nReview: {r.number} ({r.id})\n"
-                f"Basis: {r.content.base_revision}\n"
-                "Diff (\\r, \\t und \\\\ sind sichtbar escaped):\n" + r.content.diff
+                f"Basis: {r.content.base_revision}"
             )
-            for part in chunks(text):
-                self.transport.send_message(identity.external_chat_id, part)
-            # Only after ALL preview chunks were sent. Full revision remains in the DB.
+            self.transport.send_message(identity.external_chat_id, summary)
+            if diff_is_inline(r.content.diff):
+                self.transport.send_message(identity.external_chat_id, DIFF_HEADER + r.content.diff)
+            else:
+                filename = f"proposal-{p.id.hex[:8]}-review-{r.number}.diff"
+                self.transport.send_document(
+                    identity.external_chat_id,
+                    filename,
+                    r.content.diff.encode("utf-8"),
+                )
+            # Only after the full inline diff or document was sent successfully.
             buttons = ()
             if p.status in ("pending", "deferred"):
                 buttons = tuple(

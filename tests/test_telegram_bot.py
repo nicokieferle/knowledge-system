@@ -1,4 +1,8 @@
+import io
+import json
 import urllib.error
+from email import policy
+from email.parser import BytesParser
 from unittest.mock import Mock
 
 import psycopg
@@ -13,8 +17,56 @@ from knowledge_system.llm_provider import (
 )
 
 
+class Response(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+
 class StopPolling(BaseException):
     pass
+
+
+def test_send_document_builds_exact_collision_safe_multipart(monkeypatch, caplog):
+    requests = []
+    candidates = iter(("collision", "safe"))
+    private_diff = b"PRIVATE_DIFF knowledge-system-collision\n\x00exact"
+
+    def request(value, timeout):
+        requests.append((value, timeout))
+        return Response(json.dumps({"ok": True, "result": {"message_id": 1}}).encode())
+
+    monkeypatch.setattr(telegram_bot.secrets, "token_hex", lambda _size: next(candidates))
+    monkeypatch.setattr(telegram_bot.urllib.request, "urlopen", request)
+    transport = telegram_bot.TelegramHTTPTransport("SECRET_TOKEN", timeout=7)
+    transport.send_document("-123", "proposal-deadbeef-review-2.diff", private_diff, "text/x-diff")
+
+    assert len(requests) == 1
+    sent, timeout = requests[0]
+    assert sent.full_url.endswith("/sendDocument")
+    assert timeout == 7
+    content_type = sent.get_header("Content-type")
+    assert content_type == "multipart/form-data; boundary=knowledge-system-safe"
+    parsed = BytesParser(policy=policy.default).parsebytes(
+        b"MIME-Version: 1.0\r\nContent-Type: "
+        + content_type.encode("ascii")
+        + b"\r\n\r\n"
+        + sent.data
+    )
+    parts = list(parsed.iter_parts())
+    assert [(part.get_param("name", header="content-disposition")) for part in parts] == [
+        "chat_id",
+        "document",
+    ]
+    assert parts[0].get_payload(decode=True) == b"-123"
+    assert parts[1].get_filename() == "proposal-deadbeef-review-2.diff"
+    assert parts[1].get_content_type() == "text/x-diff"
+    assert parts[1].get_payload(decode=True) == private_diff
+    assert b"SECRET_TOKEN" not in sent.data
+    assert "PRIVATE_DIFF" not in caplog.text
+    assert "SECRET_TOKEN" not in caplog.text
 
 
 def update(number=1, callback=False):

@@ -113,6 +113,12 @@ V3.3 must use the accepted revision's full new content, not the draft or new LLM
 output. `check_basis` detects changed bytes or create-target appearance. It is a
 read-time check, not a cross-filesystem/DB lock; V3.3 must recheck during atomic apply.
 Accept itself has no Git, file-write, retrieval-index or MCP dependency.
+
+Telegram sends a compact summary first. A diff fitting, with its header, into 3000
+UTF-16 units is sent inline; a larger diff is one exact UTF-8 `.diff` document.
+Revision buttons are sent only after successful complete transfer. At-least-once
+delivery can duplicate a document on retry, but preparation remains idempotent and
+does not add a review revision or decision.
 # V3.1 client and routing layer
 
 ```text

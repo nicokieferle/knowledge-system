@@ -15,8 +15,9 @@ that check atomically with a guarded apply; V3.2 never writes files or indexes.
 No extra proposal statuses: pending/deferred can be reviewed, accepted/rejected
 are terminal. Preparing a revision is explicit or idempotently performed on first
 display. Refresh requires an explicit new preparation; old callbacks cannot approve
-the replacement. Telegram sends the complete diff in bounded chunks, with buttons
-only after successful delivery of all chunks. No truncated-diff Accept button.
+the replacement. Telegram shows a small complete diff inline and sends a larger
+complete diff as one in-memory UTF-8 document. Buttons follow only after successful
+delivery of the full inline diff or document. No truncated-diff Accept button.
 
 Migration replaces only the known proposals_status_check constraint atomically,
 preserves rows, and adds revision/decision tables to all durable operations. Legacy
@@ -42,8 +43,11 @@ input through the client-neutral service; no LLM runs during review or accept.
   and marks missing final newlines. It is a display format, NOT an apply patch.
   V3.3 must use the exact stored full new content/hash, never interpret this display
   diff as raw file bytes. No ANSI, normalization or silent newline conversion.
-- Telegram sends at most 3000 UTF-16 units per message. Full diff is retained/sent;
-  buttons follow only after complete delivery. Delivery remains at-least-once.
+- Telegram uses a 3000 UTF-16-unit inline message threshold including the diff
+  header. Larger diffs use `sendDocument` with exact `diff.encode("utf-8")` bytes.
+  Summary, diff/document and buttons require at most three API calls per review.
+  Buttons follow only after complete delivery. Delivery remains at-least-once;
+  a document retry can be visibly duplicated without changing durable state.
 - Callback data contains action plus immutable review UUID (37 ASCII bytes). Legacy
   unprepared proposals support only Reject/Defer via a proposal UUID, never Accept.
 - A new revision does not mutate its predecessor or reset deferred to pending.

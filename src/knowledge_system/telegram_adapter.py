@@ -18,6 +18,14 @@ class TelegramTransport(Protocol):
         self, chat_id: str, text: str, buttons: tuple[tuple[str, str], ...] = ()
     ) -> None: ...
 
+    def send_document(
+        self,
+        chat_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str = "text/x-diff",
+    ) -> None: ...
+
     def answer_callback(self, callback_id: str, text: str) -> None: ...
 
 
