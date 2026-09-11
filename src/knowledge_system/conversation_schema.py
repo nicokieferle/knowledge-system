@@ -151,3 +151,8 @@ def init_conversation_schema(conn: SchemaConnection) -> None:
 
     for statement in statements:
         conn.execute(statement)
+
+    from .review_schema import REVIEW_IMMUTABILITY, REVIEW_MIGRATION
+
+    conn.execute(REVIEW_MIGRATION)
+    conn.execute(REVIEW_IMMUTABILITY)

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import re
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -81,3 +84,102 @@ class GitMarkdownSource:
         except ValueError as exc:
             raise ValueError(f"source_path escapes source root: {source_path}") from exc
         return path
+
+    def snapshot(self, source_id: str, source_path: str) -> tuple[str, str | None]:
+        """Strict review read, including absent targets; never creates directories/files.
+
+        Refuse symlinks (including in-root aliases), junctions and ambiguous portable
+        paths. Knowledge mounts must not be writable by untrusted concurrent processes.
+        V3.3 must perform its own atomic no-follow validation at apply time.
+        """
+        from .proposal_review import MAX_REVIEW_BYTES, InvalidTarget
+
+        if source_id != DEFAULT_GIT_SOURCE_ID or self.source_id != DEFAULT_GIT_SOURCE_ID:
+            raise InvalidTarget()
+        if not isinstance(source_path, str) or not source_path or len(source_path) > 240:
+            raise InvalidTarget()
+        parts = source_path.split("/")
+        if (
+            source_path in ROOT_MARKDOWN_EXCLUDES
+            or not source_path.endswith(".md")
+            or any(
+                not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", p)
+                or p.endswith((".", " "))
+                or p.split(".")[0].upper()
+                in {
+                    "CON",
+                    "PRN",
+                    "AUX",
+                    "NUL",
+                    *(f"COM{i}" for i in range(10)),
+                    *(f"LPT{i}" for i in range(10)),
+                }
+                for p in parts
+            )
+        ):
+            raise InvalidTarget()
+        try:
+            root = self.root.resolve(strict=True)
+            if os.name == "posix":
+                return source_path, self._snapshot_posix(root, parts, MAX_REVIEW_BYTES)
+            path = root
+            for i, part in enumerate(parts):
+                path = path / part
+                if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
+                    raise InvalidTarget()
+                if path.exists() and i < len(parts) - 1 and not path.is_dir():
+                    raise InvalidTarget()
+            if not path.resolve().is_relative_to(root):
+                raise InvalidTarget()
+            if not path.exists():
+                return source_path, None
+            before = path.stat()
+            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REVIEW_BYTES:
+                raise InvalidTarget()
+            with path.open("rb") as handle:
+                data = handle.read(MAX_REVIEW_BYTES + 1)
+            after = path.stat()
+            if before != after or len(data) > MAX_REVIEW_BYTES or path.is_symlink():
+                raise InvalidTarget()
+            parent = root
+            for part in parts:
+                parent = parent / part
+                if parent.is_symlink() or getattr(parent, "is_junction", lambda: False)():
+                    raise InvalidTarget()
+            return source_path, data.decode("utf-8")
+        except (OSError, UnicodeError, ValueError):
+            raise InvalidTarget() from None
+
+    @staticmethod
+    def _snapshot_posix(root: Path, parts: list[str], limit: int) -> str | None:
+        """Pin each directory descriptor and never follow symlinks during open."""
+        from .proposal_review import InvalidTarget
+
+        directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in parts[:-1]:
+                try:
+                    child = os.open(
+                        part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                    )
+                except FileNotFoundError:
+                    return None
+                os.close(directory)
+                directory = child
+            try:
+                fd = os.open(
+                    parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+                )
+            except FileNotFoundError:
+                return None
+            with os.fdopen(fd, "rb") as handle:
+                before = os.fstat(handle.fileno())
+                if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+                    raise InvalidTarget()
+                data = handle.read(limit + 1)
+                after = os.fstat(handle.fileno())
+                if len(data) > limit or before != after:
+                    raise InvalidTarget()
+                return data.decode("utf-8")
+        finally:
+            os.close(directory)

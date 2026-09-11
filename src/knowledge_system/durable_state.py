@@ -20,6 +20,8 @@ DURABLE_TABLES = (
     "conversation_summaries",
     "proposal_suggestions",
     "proposals",
+    "proposal_reviews",
+    "proposal_decisions",
 )
 
 
@@ -74,11 +76,19 @@ def read_durable_state_fingerprint(settings: Settings) -> DurableStateFingerprin
             SELECT id, conversation_id, status, source_client, trigger_type,
                    trigger_message_id, originating_message_ids, target_source_id,
                    target_source_path, title, summary, reason, proposed_content,
-                   base_revision, source_suggestion_id, created_at
+                   base_revision, source_suggestion_id, created_at, accepted_review_id
             FROM proposals ORDER BY id
         """,
     }
+    queries["proposal_reviews"] = """SELECT id, proposal_id, revision, target_source_id,
+        target_source_path, change_kind, base_revision, old_content, old_hash,
+        new_content, new_hash, diff, created_at FROM proposal_reviews ORDER BY id"""
+    queries["proposal_decisions"] = """SELECT id, proposal_id, review_id, previous_status,
+        status, client_type, external_chat_id, external_user_id, created_at
+        FROM proposal_decisions ORDER BY id"""
     sensitive_columns = {
+        "proposal_reviews": {3, 4, 6, 7, 8, 9, 10, 11},
+        "proposal_decisions": {6, 7},
         "conversations": {1, 3},
         "client_states": {1, 2},
         "client_conversations": {1, 2},

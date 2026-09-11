@@ -31,7 +31,7 @@ def test_durable_schema_is_additive_and_has_required_consistency_constraints() -
     assert "create table if not exists proposals" in sql
     assert "source_suggestion_id uuid unique" in sql
     assert "unique (conversation_id, trigger_message_id, trigger_type)" in sql
-    assert "delete " not in sql
+    assert "delete from " not in sql
     assert "truncate " not in sql
     assert "drop table" not in sql
     assert "chunks" not in sql

@@ -330,6 +330,8 @@ def run_smoke(settings: Settings) -> dict[str, object]:
         "conversation_summaries": 3,
         "proposal_suggestions": 2,
         "proposals": 4,
+        "proposal_reviews": 0,
+        "proposal_decisions": 0,
     }
     final_fingerprint = read_durable_state_fingerprint(settings)
     assert final_fingerprint.counts == final_counts

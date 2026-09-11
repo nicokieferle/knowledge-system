@@ -48,6 +48,8 @@ def test_durable_table_allowlist_preserves_foreign_key_restore_order() -> None:
         "conversation_summaries",
         "proposal_suggestions",
         "proposals",
+        "proposal_reviews",
+        "proposal_decisions",
     ]
     assert tables == list(DURABLE_TABLES)
 
