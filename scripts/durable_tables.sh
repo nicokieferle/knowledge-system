@@ -78,8 +78,32 @@ durable_missing_sql() {
 }
 
 durable_integrity_sql() {
+  printf 'SELECT\n'
+  durable_integrity_expression
+  printf ';\n'
+}
+
+durable_integrity_guard_sql() {
   cat <<'SQL'
-SELECT
+DO $restore_integrity$
+DECLARE
+  violation_count bigint;
+BEGIN
+  SELECT
+SQL
+  durable_integrity_expression
+  cat <<'SQL'
+  INTO violation_count;
+  IF violation_count != 0 THEN
+    RAISE EXCEPTION 'Restored durable state failed integrity check';
+  END IF;
+END
+$restore_integrity$;
+SQL
+}
+
+durable_integrity_expression() {
+  cat <<'SQL'
   (SELECT count(*)
    FROM public.client_states cs
    LEFT JOIN public.conversations c ON c.id = cs.active_conversation_id
@@ -167,6 +191,6 @@ SELECT
   (SELECT count(*) FROM public.proposal_decisions d
    LEFT JOIN public.proposals p ON p.id = d.proposal_id
    LEFT JOIN public.proposal_reviews r ON r.id = d.review_id AND r.proposal_id = d.proposal_id
-   WHERE p.id IS NULL OR (d.review_id IS NOT NULL AND r.id IS NULL));
+   WHERE p.id IS NULL OR (d.review_id IS NOT NULL AND r.id IS NULL))
 SQL
 }

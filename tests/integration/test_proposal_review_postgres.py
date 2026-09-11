@@ -133,6 +133,13 @@ def test_migrates_real_v312_schema_preserves_proposal_and_is_repeatable(database
     view = service.prepare(who, p.id)
     result = service.decide(who, p.id, view.revision.id, ProposalStatus.ACCEPTED)
     assert result.accepted_review_id == view.revision.id
+    with psycopg.connect(database.database_url) as conn:
+        deferred = conn.execute(
+            """SELECT condeferrable, condeferred, convalidated FROM pg_constraint
+            WHERE conrelid='proposals'::regclass
+              AND conname='proposals_accepted_review_fk'"""
+        ).fetchone()
+    assert deferred == (True, True, True)
 
 
 @pytest.mark.parametrize(
@@ -304,14 +311,25 @@ def test_real_archive_restore_preserves_accepted_revision(database):
         text=True,
     ).stdout.strip()
     assert label == "v32-review"
-    initialize(database)
+    from scripts.conversation_postgres_smoke import run_smoke
+
+    run_smoke(database)
     service, who, p = seed(database)
-    r = service.prepare(who, p.id).revision
-    service.decide(who, p.id, r.id, ProposalStatus.ACCEPTED)
+    first = service.prepare(who, p.id).revision
+    accepted = service.prepare(who, p.id, new_content="accepted second revision\n").revision
+    assert first.number == 1 and accepted.number == 2
+    service.decide(who, p.id, accepted.id, ProposalStatus.ACCEPTED)
+    deferred_service, deferred_who, deferred_proposal = seed(database)
+    deferred_revision = deferred_service.prepare(deferred_who, deferred_proposal.id).revision
+    deferred_service.decide(
+        deferred_who, deferred_proposal.id, deferred_revision.id, ProposalStatus.DEFERRED
+    )
     before = read_durable_state_fingerprint(database)
+    assert set(before.counts) == set(DURABLE_TABLES)
+    assert all(before.counts[table] > 0 for table in DURABLE_TABLES)
     with psycopg.connect(database.database_url) as conn:
         schema = conn.execute("SELECT current_schema()").fetchone()[0]
-    archive = subprocess.run(
+    dump = subprocess.run(
         [
             "docker",
             "exec",
@@ -324,24 +342,35 @@ def test_real_archive_restore_preserves_accepted_revision(database):
             "--format=custom",
             "--data-only",
             "--no-owner",
+            "--no-privileges",
             *[f"--table={schema}.{table}" for table in DURABLE_TABLES],
         ],
         check=True,
         capture_output=True,
-    ).stdout
+    )
+    archive = dump.stdout
     assert archive
-    subprocess.run(
+    warning = dump.stderr.decode()
+    assert "circular foreign-key constraints" in warning
+    assert "proposals" in warning and "proposal_reviews" in warning
+    listing = subprocess.run(
         ["docker", "exec", "-i", container, "pg_restore", "--list"],
         input=archive,
         check=True,
         capture_output=True,
+        text=False,
+    ).stdout.decode()
+    assert {line.split()[6] for line in listing.splitlines() if " TABLE DATA " in line} == set(
+        DURABLE_TABLES
     )
     target = "knowledge_v32_restore_" + uuid4().hex
+    failing_target = "knowledge_v32_restore_failure_" + uuid4().hex
     address = urlsplit(database.database_url)
     admin = urlunsplit(address._replace(query=""))
     restored_url = urlunsplit(address._replace(path="/" + target))
     with psycopg.connect(admin, autocommit=True) as conn:
         conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target)))
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(failing_target)))
     try:
         with psycopg.connect(restored_url, autocommit=True) as conn:
             conn.execute("CREATE EXTENSION vector")
@@ -360,9 +389,9 @@ def test_real_archive_restore_preserves_accepted_revision(database):
                 target,
                 "--data-only",
                 "--no-owner",
+                "--no-privileges",
                 "--single-transaction",
                 "--exit-on-error",
-                "--disable-triggers",
             ],
             input=archive,
             check=True,
@@ -370,7 +399,110 @@ def test_real_archive_restore_preserves_accepted_revision(database):
         )
         restored = replace(database, database_url=restored_url)
         assert read_durable_state_fingerprint(restored) == before
-        assert PostgresReviewStore(restored).get(who, p.id).accepted_review_id == r.id
+        assert PostgresReviewStore(restored).get(who, p.id).accepted_review_id == accepted.id
+        assert (
+            PostgresReviewStore(restored).get(deferred_who, deferred_proposal.id).proposal.status
+            == "deferred"
+        )
+        with psycopg.connect(restored.database_url, autocommit=True) as conn:
+            constraints = conn.execute(
+                """SELECT conname, condeferrable, condeferred, convalidated
+                FROM pg_constraint WHERE contype='f' ORDER BY conname"""
+            ).fetchall()
+            assert all(row[3] for row in constraints)
+            deferred_fks = [(row[0], row[2]) for row in constraints if row[1]]
+            assert deferred_fks == [("proposals_accepted_review_fk", True)]
+            triggers = dict(
+                conn.execute(
+                    """SELECT tgname, tgenabled FROM pg_trigger
+                    WHERE tgname IN ('proposal_reviews_immutable',
+                                     'proposal_decisions_immutable', 'proposals_terminal')"""
+                ).fetchall()
+            )
+            assert triggers == {
+                "proposal_reviews_immutable": "O",
+                "proposal_decisions_immutable": "O",
+                "proposals_terminal": "O",
+            }
+            with pytest.raises(psycopg.Error, match="Immutable review audit record"):
+                conn.execute(
+                    "UPDATE proposal_reviews SET new_content='tampered' WHERE id=%s",
+                    (accepted.id,),
+                )
+            with pytest.raises(psycopg.Error, match="Terminal proposal is immutable"):
+                conn.execute("UPDATE proposals SET title='tampered' WHERE id=%s", (p.id,))
+
+        failing_url = urlunsplit(address._replace(path="/" + failing_target))
+        with psycopg.connect(failing_url, autocommit=True) as conn:
+            conn.execute("CREATE EXTENSION vector")
+            conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
+            init_conversation_schema(conn)
+        restore_sql = subprocess.run(
+            [
+                "docker",
+                "exec",
+                "-i",
+                container,
+                "pg_restore",
+                "--file=-",
+                "--data-only",
+                "--no-owner",
+                "--no-privileges",
+            ],
+            input=archive,
+            check=True,
+            capture_output=True,
+        ).stdout
+        restore_lines = restore_sql.splitlines(keepends=True)
+        assert sum(line.startswith(b"\\restrict ") for line in restore_lines) == 1
+        assert sum(line.startswith(b"\\unrestrict ") for line in restore_lines) == 1
+        sequence_lines = [line for line in restore_lines if b"pg_catalog.setval(" in line]
+        assert len(sequence_lines) == 1
+        restore_without_setval = b"".join(
+            line for line in restore_lines if b"pg_catalog.setval(" not in line
+        )
+        final_failure = f"""
+            ALTER SEQUENCE {schema}.messages_id_seq RESTART WITH 999;
+            DO $$ BEGIN RAISE EXCEPTION 'synthetic final restore failure'; END $$;
+            """.encode()
+        with pytest.raises(subprocess.CalledProcessError):
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    container,
+                    "psql",
+                    "-U",
+                    "knowledge_test",
+                    "-d",
+                    failing_target,
+                    "--set=ON_ERROR_STOP=1",
+                    "--single-transaction",
+                    "--file=-",
+                ],
+                input=restore_without_setval + final_failure,
+                check=True,
+                capture_output=True,
+            )
+        failed = replace(database, database_url=failing_url)
+        with psycopg.connect(failed.database_url) as conn:
+            counts = [
+                conn.execute(
+                    sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
+                ).fetchone()[0]
+                for table in DURABLE_TABLES
+            ]
+            trigger_enabled = conn.execute(
+                "SELECT tgenabled FROM pg_trigger WHERE tgname='proposal_reviews_immutable'"
+            ).fetchone()[0]
+            sequence_state = conn.execute(
+                "SELECT last_value, is_called FROM messages_id_seq"
+            ).fetchone()
+        assert counts == [0] * len(DURABLE_TABLES)
+        assert trigger_enabled == "O"
+        assert sequence_state == (1, False)
     finally:
         with psycopg.connect(admin, autocommit=True) as conn:
             conn.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(target)))
+            conn.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(failing_target)))

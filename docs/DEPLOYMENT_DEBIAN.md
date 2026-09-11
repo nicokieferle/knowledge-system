@@ -11,9 +11,10 @@ Repeated initialization preserves migrated data. Then take a V3.2 backup.
 The durable allowlist now contains ten tables. Both new tables and the accepted
 revision reference are included in backup/restore/fingerprint. Review rows contain
 complete private old/new content and diffs: protect them like conversation history.
-The accepted-review FK introduces a cycle with proposals; the existing fresh-target
-restore uses a single transaction with triggers disabled and checks integrity after
-restoration. It is never a restore into the live database. No new identity sequence
+The accepted-review FK introduces a cycle with proposals; only that foreign key is
+`DEFERRABLE INITIALLY DEFERRED`. The fresh-target restore keeps all foreign keys and
+immutability triggers enabled, and loads data, repairs the message sequence and checks
+integrity in one transaction. It is never a restore into the live database. No new identity sequence
 is introduced (review/decision IDs are UUIDs).
 
 Restore a V3.2 archive only into an initialized V3.2 schema. For a V3.1.2 archive,
@@ -215,8 +216,9 @@ BACKUP_DIR=/data/knowledgesystem/backups \
 ```
 
 The script uses `.env.server` and `compose.server.yml` by default, writes through a restrictive
-temporary file, checks that `pg_dump` succeeded and prints `backup_file`, `backup_bytes` and
-`backup_format`. It refuses `/data/knowledgesystem/postgres` as a backup target.
+temporary file, checks that `pg_dump` succeeded, verifies that `pg_restore --list` can read the
+archive, and prints `backup_file`, `backup_bytes`, `backup_format` and
+`backup_archive_check=pass`. It refuses `/data/knowledgesystem/postgres` as a backup target.
 
 Inspect an archive without restoring or printing conversation contents:
 
@@ -225,6 +227,11 @@ BACKUP=/data/knowledgesystem/backups/durable-state-YYYYMMDDTHHMMSSZ-ID.dump
 docker compose --env-file .env.server -f compose.server.yml exec -T postgres \
   pg_restore --list < "$BACKUP"
 ```
+
+This is only a fast archive-readability check. PostgreSQL can still warn about the intentional
+`proposals`/`proposal_reviews` data-only dependency cycle, and the warning is not suppressed.
+Only a real restore into an initialized fresh database, followed by the fingerprint and
+protection checks below, demonstrates recoverability.
 
 Archives contain private conversation and proposal data. Keep the directory non-public,
 restrict copies to trusted operators and never commit `.dump` files.
@@ -250,8 +257,15 @@ RESTORE_DATABASE="$RESTORE_DB" \
 ```
 
 The restore script requires all durable tables to exist and contain zero rows. It refuses the
-configured production database and any non-empty target. It does not use `--clean`, `DROP` or
-`TRUNCATE`. A second invocation against the restored database must fail without changing data.
+configured production database and any non-empty target. It does not use `--clean`, `DROP`,
+`TRUNCATE` or `--disable-triggers`. It extracts only the allowlisted table data to a mode-0600
+temporary SQL file inside the PostgreSQL container, then executes that SQL, the message-sequence
+repair and the durable-integrity guard in one `psql --single-transaction` operation with
+`ON_ERROR_STOP`. The temporary SQL file is removed on success, error or interruption. The
+deferred accepted-review foreign key is checked at commit; all other foreign keys remain
+immediate and all immutability triggers stay enabled. Any load, sequence, integrity or commit
+failure rolls back the whole restore. A second invocation against the restored database must
+fail without changing data.
 
 Compare source and restored state without printing message, summary or proposal text:
 

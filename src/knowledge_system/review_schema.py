@@ -35,6 +35,14 @@ BEGIN
                    AND conrelid = 'proposals'::regclass) THEN
         ALTER TABLE proposals ADD CONSTRAINT proposals_accepted_review_fk
             FOREIGN KEY (id, accepted_review_id) REFERENCES proposal_reviews(proposal_id, id);
+    END IF;
+    -- A data-only restore loads proposals before their immutable review rows. The
+    -- accepted-review edge is the one intentionally cyclic edge, so defer only
+    -- this FK until transaction commit; every other FK remains immediate.
+    ALTER TABLE proposals ALTER CONSTRAINT proposals_accepted_review_fk
+        DEFERRABLE INITIALLY DEFERRED;
+    IF NOT EXISTS (SELECT FROM pg_constraint WHERE conname = 'proposals_acceptance_check'
+                   AND conrelid = 'proposals'::regclass) THEN
         ALTER TABLE proposals ADD CONSTRAINT proposals_acceptance_check
             CHECK ((status = 'accepted') = (accepted_review_id IS NOT NULL));
     END IF;

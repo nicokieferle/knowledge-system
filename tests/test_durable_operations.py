@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from knowledge_system.durable_state import DURABLE_TABLES
+from knowledge_system.review_schema import REVIEW_SCHEMA
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PROJECT_ROOT / "scripts"
@@ -26,6 +27,8 @@ def test_backup_uses_restrictive_custom_format_and_shared_table_allowlist() -> N
     assert 'source "${SCRIPT_DIR}/durable_tables.sh"' in backup
     assert "--format=custom" in backup
     assert "--data-only" in backup
+    assert "pg_restore --list" in backup
+    assert "backup_archive_check=pass" in backup
     assert "umask 077" in backup
     assert "chmod 0600" in backup
     assert "/data/knowledgesystem/backups" in backup
@@ -72,6 +75,7 @@ def test_dump_and_restore_use_their_distinct_table_filter_syntax() -> None:
 
 def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     restore = (SCRIPTS / "restore_durable_state.sh").read_text(encoding="utf-8")
+    common = (SCRIPTS / "durable_tables.sh").read_text(encoding="utf-8")
 
     assert 'source "${SCRIPT_DIR}/durable_tables.sh"' in restore
     assert "Refusing to restore directly" in restore
@@ -79,12 +83,34 @@ def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     assert restore.index("existing_count=") < restore.index("pg_restore --username")
     assert "--single-transaction" in restore
     assert "--exit-on-error" in restore
-    assert "--disable-triggers" in restore
-    assert restore.index("sequence-reset") < restore.index("restore-integrity-check")
-    assert "Restored durable state failed integrity check" in restore
+    assert "--disable-triggers" not in restore
+    assert "--set=ON_ERROR_STOP=1" in restore
+    assert '--file="$restore_sql" --command="$sequence_sql"' in restore
+    assert '--command="$integrity_guard_sql"' in restore
+    assert "durable_integrity_guard_sql" in restore
+    assert "restore_atomic=true" in restore
+    assert "restore_triggers_disabled=false" in restore
+    assert "mktemp /tmp/knowledge-durable-restore." in restore
+    assert "Archive must contain exactly one data entry for every durable table" in restore
+    assert "Restore SQL is missing PostgreSQL restriction guards" in restore
+    assert "--no-psqlrc" in restore
+    assert "restore_psql_restricted=true" in restore
+    assert 'grep -F -v " SEQUENCE SET "' in restore
+    assert "ALTER SEQUENCE public.messages_id_seq RESTART" in restore
+    assert "SELECT setval(" not in restore
+    assert "umask 077" in restore
+    assert "Restored durable state failed integrity check" in common
     assert "--clean" not in restore
     assert "DROP " not in restore
     assert "TRUNCATE " not in restore
+
+
+def test_only_the_cyclic_accepted_review_fk_is_initially_deferred() -> None:
+    assert (
+        "ALTER TABLE proposals ALTER CONSTRAINT proposals_accepted_review_fk\n"
+        "        DEFERRABLE INITIALLY DEFERRED;"
+    ) in REVIEW_SCHEMA
+    assert REVIEW_SCHEMA.count("DEFERRABLE INITIALLY DEFERRED") == 1
 
 
 def test_smoke_compose_is_isolated_from_production_resources() -> None:
