@@ -1,5 +1,25 @@
 # Knowledge System
 
+## V3.2: Proposal Review (development)
+
+V3.1.2 is the production-tested baseline. V3.2 adds a client-neutral
+`ProposalReviewService`: inspect pending proposals, prepare immutable review revisions,
+then Accept, Reject or Defer. **Accept stores consent only: no Markdown/Git write and
+no reindex.** V3.3 will apply the exact accepted bytes only after rechecking the base.
+
+Telegram commands:
+
+- `/proposals`: up to 100 open/deferred proposals of the current owned topic.
+- `/proposal <uuid>`: show an existing revision, or safely prepare the first one.
+  The full diff is split into bounded messages; revision-bound buttons follow only
+  after all preview messages were sent.
+- `/proposal-refresh <uuid>`: explicitly prepare/show a fresh revision from the draft
+  and current source. Old revisions remain intact; old Accept buttons cannot accept it.
+
+Invalid legacy targets have Reject/Defer but no Accept. A trusted application client
+can correct target/content via `prepare(..., target_source_path=..., new_content=...)`;
+Telegram does not expose a Markdown editor. See [review design](docs/v32-review-design.md).
+
 ## V3.1: real chat, Telegram, and topic routing
 
 Telegram is a thin long-polling client, not conversation state. One Telegram chat/user
@@ -11,7 +31,7 @@ activity, active marker) and chooses continue, switch, or create. `/new`, `/topi
 
 Conversation memory remains durable application context, **not canonical knowledge**.
 Retrieval calls `KnowledgeService` directly (never MCP/HTTP), preserving source IDs for
-future read-only source adapters. A proposal is only a pending review object: neither chat,
+future read-only source adapters. A proposal starts as a pending review object: neither chat,
 commands, nor suggestion buttons write Markdown or Git.
 
 The real provider adapter uses an OpenAI-compatible Chat Completions endpoint behind the
@@ -34,7 +54,7 @@ For V0:
 - search uses exact cosine similarity
 - no AI is allowed to write directly to `main`
 
-Later versions can add proposals, approval/rejection and other source adapters.
+Proposal review is available in V3.2; Git application and other source adapters remain later stages.
 
 ## Architecture
 
@@ -201,8 +221,8 @@ after the first `quality` search.
 ## Conversation core
 
 V3.0 adds a provider- and client-independent conversation core with persistent messages,
-rolling summaries, proposal intent handling and pending proposals. It has no real LLM or
-messenger provider yet and cannot write canonical knowledge. See
+rolling summaries, proposal intent handling and pending proposals. V3.1 adds the real LLM and
+Telegram client; V3.2 adds review but still cannot write canonical knowledge. See
 [docs/conversation-architecture.md](docs/conversation-architecture.md).
 
 Conversation history, summaries, proposal suggestions and proposals share PostgreSQL with

@@ -48,7 +48,7 @@
 - [x] bind to loopback by default
 - [x] enforce explicit Host/Origin allowlists through MCP transport security
 - [x] verify a real MCP v2 client over local HTTP
-- [ ] deploy to the Debian server
+- [x] deploy to the Debian server
 
 ## V2.2 — Debian Docker deployment
 
@@ -72,15 +72,17 @@
 
 ## V3.1 — client and LLM integration
 
-- [ ] implement one real LLM provider behind the existing protocols
-- [ ] add a Telegram adapter as a client of ConversationService
+- [x] implement one real LLM provider behind the existing protocols
+- [x] add a Telegram adapter as a client of ConversationService
+- [x] production-tested V3.1.2 routing normalization and retry diagnostics
 
 ## V3.2 — proposal review
 
-- [ ] proposed / accepted / rejected / deferred lifecycle
-- [ ] diff preview
-- [ ] stale-base detection
-- [ ] explicit approve/reject operations
+- [x] pending / accepted / rejected / deferred lifecycle (implementation; not deployed)
+- [x] immutable review revisions and full diff preview
+- [x] verified content-hash base and stale-base detection
+- [x] owned, atomic, idempotent accept/reject/defer operations
+- [ ] external review and controlled V3.2 production rollout
 
 ## V3.3 — safe Git apply
 
@@ -103,4 +105,4 @@
 - [x] Normal chat, isolated memory and direct knowledge retrieval
 - [x] Proposal intent and inline suggestion confirmation
 
-V3.2 proposal review UI/lifecycle and V3.3 approved Git/Markdown writes remain open.
+V3.2 implementation awaits external review and deployment. V3.3 Git/Markdown writes remain open.
