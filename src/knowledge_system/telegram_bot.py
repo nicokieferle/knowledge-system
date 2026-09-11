@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import secrets
 import time
 import urllib.error
 import urllib.parse
@@ -17,9 +19,12 @@ from .conversation_router import ConversationRouter
 from .conversation_service import ConversationService
 from .conversation_store import PostgresConversationStore
 from .llm_provider import LLMProviderError, OpenAICompatibleConfig, OpenAICompatibleProvider
+from .proposal_review import ProposalReviewService
 from .proposal_service import ProposalService
 from .proposal_store import PostgresProposalStore
+from .review_store import PostgresReviewStore
 from .service import KnowledgeService
+from .sources import GitMarkdownSource
 from .telegram_adapter import TelegramAdapter, TelegramCallback, TelegramMessage
 
 LOG = logging.getLogger(__name__)
@@ -36,6 +41,9 @@ class TelegramHTTPTransport:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
+        return self._execute(request)
+
+    def _execute(self, request: urllib.request.Request) -> Any:
         with urllib.request.urlopen(request, timeout=self.timeout) as response:
             result = json.load(response)
         if not result.get("ok"):
@@ -53,6 +61,44 @@ class TelegramHTTPTransport:
                 ]
             }
         self.call("sendMessage", payload)
+
+    def send_document(
+        self,
+        chat_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str = "text/x-diff",
+    ) -> None:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,119}", filename):
+            raise ValueError("Invalid Telegram document filename")
+        if mime_type not in ("text/x-diff", "text/plain") or not isinstance(content, bytes):
+            raise ValueError("Invalid Telegram document")
+        fields = (str(chat_id).encode("utf-8"), filename.encode("ascii"), mime_type.encode("ascii"))
+        for _ in range(8):
+            boundary = ("knowledge-system-" + secrets.token_hex(24)).encode("ascii")
+            if all(boundary not in value for value in (*fields, content)):
+                break
+        else:
+            raise RuntimeError("Could not create safe multipart boundary")
+        body = b"".join(
+            (
+                b"--" + boundary + b'\r\nContent-Disposition: form-data; name="chat_id"\r\n\r\n',
+                fields[0],
+                b"\r\n--"
+                + boundary
+                + b'\r\nContent-Disposition: form-data; name="document"; filename="',
+                fields[1],
+                b'"\r\nContent-Type: ' + fields[2] + b"\r\n\r\n",
+                content,
+                b"\r\n--" + boundary + b"--\r\n",
+            )
+        )
+        request = urllib.request.Request(
+            self._base + "sendDocument",
+            data=body,
+            headers={"Content-Type": "multipart/form-data; boundary=" + boundary.decode("ascii")},
+        )
+        self._execute(request)
 
     def answer_callback(self, callback_id: str, text: str) -> None:
         self.call("answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
@@ -80,7 +126,13 @@ def build_adapter() -> tuple[TelegramAdapter, TelegramHTTPTransport]:
     )
     transport = TelegramHTTPTransport(chat.telegram_bot_token)
     return TelegramAdapter(
-        ConversationRouter(conversations, states, provider), service, states, transport
+        ConversationRouter(conversations, states, provider),
+        service,
+        states,
+        transport,
+        review_service=ProposalReviewService(
+            PostgresReviewStore(settings), GitMarkdownSource(settings.knowledge_root)
+        ),
     ), transport
 
 

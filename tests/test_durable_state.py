@@ -20,6 +20,8 @@ class Cursor:
 class FingerprintConnection:
     def __init__(self, rows_by_table) -> None:
         self.rows_by_table = rows_by_table
+        for table in DURABLE_TABLES:
+            self.rows_by_table.setdefault(table, [])
 
     def execute(self, query: str) -> Cursor:
         table = next(table for table in DURABLE_TABLES if f"FROM {table}" in query)
@@ -69,6 +71,8 @@ def test_durable_fingerprint_is_deterministic_and_counts_all_tables(monkeypatch)
         "conversation_summaries": 0,
         "proposal_suggestions": 0,
         "proposals": 0,
+        "proposal_reviews": 0,
+        "proposal_decisions": 0,
     }
     assert len(first.sha256) == 64
     assert "Private" not in first.sha256

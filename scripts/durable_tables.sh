@@ -10,6 +10,8 @@ readonly DURABLE_TABLES=(
   conversation_summaries
   proposal_suggestions
   proposals
+  proposal_reviews
+  proposal_decisions
 )
 
 configure_compose_command() {
@@ -152,6 +154,19 @@ SELECT
   (SELECT count(*)
    FROM public.proposals p
    LEFT JOIN public.proposal_suggestions ps ON ps.id = p.source_suggestion_id
-   WHERE p.source_suggestion_id IS NOT NULL AND ps.id IS NULL);
+   WHERE p.source_suggestion_id IS NOT NULL AND ps.id IS NULL)
+  +
+  (SELECT count(*) FROM public.proposal_reviews r
+   LEFT JOIN public.proposals p ON p.id = r.proposal_id WHERE p.id IS NULL)
+  +
+  (SELECT count(*) FROM public.proposals p
+   LEFT JOIN public.proposal_reviews r ON r.id = p.accepted_review_id AND r.proposal_id = p.id
+   WHERE (p.status = 'accepted') != (p.accepted_review_id IS NOT NULL)
+      OR (p.accepted_review_id IS NOT NULL AND r.id IS NULL))
+  +
+  (SELECT count(*) FROM public.proposal_decisions d
+   LEFT JOIN public.proposals p ON p.id = d.proposal_id
+   LEFT JOIN public.proposal_reviews r ON r.id = d.review_id AND r.proposal_id = d.proposal_id
+   WHERE p.id IS NULL OR (d.review_id IS NOT NULL AND r.id IS NULL));
 SQL
 }

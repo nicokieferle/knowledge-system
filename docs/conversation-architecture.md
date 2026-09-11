@@ -16,12 +16,12 @@ Other client-+          |
                         `--> ProposalService (durable pending records)
 ```
 
-Telegram is only a future adapter. Generic `client_type`, external conversation IDs and
+Telegram is a thin V3.1 adapter. Generic `client_type`, external conversation IDs and
 external message IDs preserve client references without putting Telegram concepts into core
 logic. A different client can reopen the same server-side conversation if its adapter maps to
 the same conversation ID.
 
-Real LLM implementations will be injected behind `ChatModel`, `ConversationSummarizer`,
+Real LLM implementations are injected behind `ChatModel`, `ConversationSummarizer`,
 `IntentClassifier` and `ProposalGenerator`. The core has no provider SDK, key or network call.
 Unit tests use deterministic fakes.
 
@@ -76,7 +76,7 @@ The PostgreSQL instance now contains two categories with different operational g
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Durable and backup-relevant: `conversations`, `messages`, `conversation_summaries`,
   `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
-  `client_message_bindings`.
+  `client_message_bindings`, `proposal_reviews` and `proposal_decisions`.
 
 `knowledge index` is scoped to chunk tables. `knowledge init-db` uses additive `IF NOT EXISTS`
 DDL and preserves durable rows. An index rebuild or reset must never drop, truncate or delete
@@ -85,10 +85,40 @@ once conversations exist; operations need a database backup and restore plan.
 
 ## Future adapters
 
-A Telegram adapter will translate updates into `ConversationService` calls and render the
-structured `ConversationTurnResult`; it will not own history or intent state. A real LLM
-provider will implement the four existing protocols. Proposal review, approval, canonical
-file changes, Git operations and reindexing remain later, separately guarded stages.
+The Telegram adapter translates updates into `ConversationService` calls and renders the
+structured `ConversationTurnResult`; it does not own history or intent state. The real LLM
+provider implements the four existing protocols. Proposal review and approval are the
+V3.2 stage; canonical file changes, Git operations and reindexing remain the separately
+guarded V3.3 stage.
+
+## V3.2 review boundary
+
+`TelegramReview -> ProposalReviewService -> ReviewStore / ReviewSource` is independent
+of conversation generation. A suggestion asks whether to generate a proposal; it is
+not consent to modify knowledge. A proposal is the untrusted draft. A review revision
+is the immutable concrete target/base/old/new/hash/diff that can be accepted.
+
+Preparation reads only `GitMarkdownSource.snapshot`. The draft's base is ignored.
+`pending -> accepted/rejected/deferred`, `deferred -> accepted/rejected` are supported;
+accepted/rejected are terminal. Identical action+revision retries reuse the decision;
+contradictory or superseded callbacks fail. Deferral does not reopen to pending.
+
+The store locks the proposal and verifies the full client ownership relation under
+the same transaction. Preparing revisions is compare-and-set against the prior
+review ID. Decisions atomically append audit records and update status/accepted ID.
+Revision and decision rows are immutable in the application and via DB triggers;
+terminal proposal rows cannot be changed except for identical idempotency no-ops.
+
+V3.3 must use the accepted revision's full new content, not the draft or new LLM
+output. `check_basis` detects changed bytes or create-target appearance. It is a
+read-time check, not a cross-filesystem/DB lock; V3.3 must recheck during atomic apply.
+Accept itself has no Git, file-write, retrieval-index or MCP dependency.
+
+Telegram sends a compact summary first. A diff fitting, with its header, into 3000
+UTF-16 units is sent inline; a larger diff is one exact UTF-8 `.diff` document.
+Revision buttons are sent only after successful complete transfer. At-least-once
+delivery can duplicate a document on retry, but preparation remains idempotent and
+does not add a review revision or decision.
 # V3.1 client and routing layer
 
 ```text

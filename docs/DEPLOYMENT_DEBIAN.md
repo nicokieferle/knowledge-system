@@ -1,5 +1,27 @@
 # Debian 12 Docker deployment
 
+## V3.2 durable review migration (not deployed by this change)
+
+Before a separately authorized rollout, take a V3.1.2 durable backup using the old
+checkout. Run the new `init-db` only under the deployment gate. Its transactional,
+named migration replaces `proposals_status_check`, adds `accepted_review_id` and
+creates `proposal_reviews` and `proposal_decisions` without deleting existing rows.
+Repeated initialization preserves migrated data. Then take a V3.2 backup.
+
+The durable allowlist now contains ten tables. Both new tables and the accepted
+revision reference are included in backup/restore/fingerprint. Review rows contain
+complete private old/new content and diffs: protect them like conversation history.
+The accepted-review FK introduces a cycle with proposals; the existing fresh-target
+restore uses a single transaction with triggers disabled and checks integrity after
+restoration. It is never a restore into the live database. No new identity sequence
+is introduced (review/decision IDs are UUIDs).
+
+Restore a V3.2 archive only into an initialized V3.2 schema. For a V3.1.2 archive,
+restore using the V3.1.2 schema/tools in a fresh database, then migrate; do not use
+cross-version fingerprints as equivalent. New allowlists must not be run against
+an unmigrated live database. No PostgreSQL volume recreation, index run or knowledge
+write is required for V3.2. MCP remains read-only with the same two tools.
+
 This deployment keeps `knowledge/` as the canonical knowledge source. PostgreSQL contains a
 disposable, rebuildable retrieval index and, from V3.0 onward, may also contain durable
 conversation and proposal state. It exposes the MCP endpoint only on the Debian host loopback
@@ -172,7 +194,7 @@ PostgreSQL contains two operationally different data classes:
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Non-rebuildable: `conversations`, `messages`, `conversation_summaries`,
   `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
-  `client_message_bindings`.
+  `client_message_bindings`, `proposal_reviews` and `proposal_decisions`.
 
 The scripts use the PostgreSQL 17 `pg_dump` and `pg_restore` binaries already present in the
 PostgreSQL container. They never put the database password on the command line. The durable
@@ -245,7 +267,7 @@ docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-m
 
 Both commands must report identical counts and `durable_state_sha256`. The fingerprint covers
 IDs, statuses, foreign-key relationships, summary boundaries, suggestion links, client routing
-links and hashed private fields. It never prints the private field values. Verify all eight
+links, review revisions, decisions and hashed private fields. It never prints the private field values. Verify all ten
 table counts, the fingerprint, a successful reconnect and the refusal of a second restore
 before considering a backup recoverable.
 
