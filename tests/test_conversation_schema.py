@@ -36,6 +36,15 @@ def test_durable_schema_is_additive_and_has_required_consistency_constraints() -
     assert "drop table" not in sql
     assert "chunks" not in sql
 
+    review_schema_calls = [
+        statement
+        for statement in connection.statements
+        if "pg_advisory_xact_lock(320032)" in statement
+    ]
+    assert len(review_schema_calls) == 1
+    assert "proposal_reviews_immutable" in review_schema_calls[0]
+    assert "proposals_terminal" in review_schema_calls[0]
+
 
 def test_database_initialization_uses_additive_durable_schema(monkeypatch) -> None:
     class ConnectionContext(RecordingConnection):

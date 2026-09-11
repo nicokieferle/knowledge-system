@@ -6,14 +6,14 @@ remained unchanged. This is development validation, not a production rollout.
 
 ## Results
 
-- Full Windows suite with all three PostgreSQL opt-ins: **304 passed, 1 skipped**
-  (32.53 seconds on the final run).
-- All **27 PostgreSQL integration cases** executed, including 14 V3.2 cases and
+- Full Windows suite with all three PostgreSQL opt-ins: **317 passed, 3 skipped**
+  (33.23 seconds on the final follow-up run).
+- All **28 PostgreSQL integration cases** executed, including 15 V3.2 cases and
   the 13 existing conversation/retry cases. No PostgreSQL skips or failures.
 - PostgreSQL **17.11**, isolated local Docker test container, loopback-only port,
   tmpfs data directory, synthetic credentials/data, separate test databases.
-- Linux review/path suite: **24 passed**, including the symlink test skipped on
-  Windows because Windows did not permit symlink creation. The minimal Linux
+- Linux review/path suite: **38 passed**, including the symlink, POSIX-atime and path-exchange
+  tests skipped on Windows. The minimal Linux
   image emitted a missing sentence-transformers dependency warning; this was a
   focused source/path suite, not a full Linux application test.
 - `python -m ruff check .`: PASS.
@@ -36,6 +36,14 @@ concurrent decisions/preparation, expected-status CAS, callback retries and
 immutable audit records. A real custom pg_dump archive is listed and restored
 into a fresh test database; the complete durable fingerprint and accepted review
 reference match afterward.
+
+The follow-up review corrected snapshot stability to compare device/inode, file
+type, size, mtime and ctime while deliberately ignoring atime. An old-atime Linux
+regression proves a normal read remains valid. Portable case-collision checks now
+reject differently-cased existing path components and all root README aliases.
+The V3.2 migration and immutability DDL are sent in one PostgreSQL command; a real
+autocommit failure test proves the complete implicit transaction rolls back to the
+unchanged V3.1.2 constraint with no review table left behind.
 
 ## Self-review findings addressed
 

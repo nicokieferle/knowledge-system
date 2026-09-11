@@ -11,6 +11,28 @@ ROOT_MARKDOWN_EXCLUDES = {"README.md"}
 DEFAULT_GIT_SOURCE_ID = "knowledge-git"
 
 
+def _stable_file_metadata(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Return change-sensitive identity metadata while deliberately excluding atime."""
+
+    return (
+        value.st_dev,
+        value.st_ino,
+        stat.S_IFMT(value.st_mode),
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
+
+
+def _reject_portable_case_alias(names: list[str], requested: str) -> None:
+    """Reject a differently-cased existing component on every host filesystem."""
+
+    from .proposal_review import InvalidTarget
+
+    if any(name != requested and name.casefold() == requested.casefold() for name in names):
+        raise InvalidTarget()
+
+
 @dataclass(frozen=True)
 class SourceDocument:
     source_id: str
@@ -100,7 +122,7 @@ class GitMarkdownSource:
             raise InvalidTarget()
         parts = source_path.split("/")
         if (
-            source_path in ROOT_MARKDOWN_EXCLUDES
+            source_path.casefold() in {name.casefold() for name in ROOT_MARKDOWN_EXCLUDES}
             or not source_path.endswith(".md")
             or any(
                 not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", p)
@@ -124,6 +146,9 @@ class GitMarkdownSource:
                 return source_path, self._snapshot_posix(root, parts, MAX_REVIEW_BYTES)
             path = root
             for i, part in enumerate(parts):
+                if not path.exists():
+                    return source_path, None
+                _reject_portable_case_alias([entry.name for entry in path.iterdir()], part)
                 path = path / part
                 if path.is_symlink() or getattr(path, "is_junction", lambda: False)():
                     raise InvalidTarget()
@@ -139,7 +164,11 @@ class GitMarkdownSource:
             with path.open("rb") as handle:
                 data = handle.read(MAX_REVIEW_BYTES + 1)
             after = path.stat()
-            if before != after or len(data) > MAX_REVIEW_BYTES or path.is_symlink():
+            if (
+                _stable_file_metadata(before) != _stable_file_metadata(after)
+                or len(data) > MAX_REVIEW_BYTES
+                or path.is_symlink()
+            ):
                 raise InvalidTarget()
             parent = root
             for part in parts:
@@ -158,6 +187,7 @@ class GitMarkdownSource:
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             for part in parts[:-1]:
+                _reject_portable_case_alias(os.listdir(directory), part)
                 try:
                     child = os.open(
                         part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
@@ -167,6 +197,7 @@ class GitMarkdownSource:
                 os.close(directory)
                 directory = child
             try:
+                _reject_portable_case_alias(os.listdir(directory), parts[-1])
                 fd = os.open(
                     parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
                 )
@@ -178,7 +209,12 @@ class GitMarkdownSource:
                     raise InvalidTarget()
                 data = handle.read(limit + 1)
                 after = os.fstat(handle.fileno())
-                if len(data) > limit or before != after:
+                path_after = os.stat(parts[-1], dir_fd=directory, follow_symlinks=False)
+                if (
+                    len(data) > limit
+                    or _stable_file_metadata(before) != _stable_file_metadata(after)
+                    or _stable_file_metadata(before) != _stable_file_metadata(path_after)
+                ):
                     raise InvalidTarget()
                 return data.decode("utf-8")
         finally:

@@ -80,3 +80,7 @@ $$;
 CREATE OR REPLACE TRIGGER proposals_terminal
     BEFORE UPDATE ON proposals FOR EACH ROW EXECUTE FUNCTION guard_terminal_proposal();
 """
+
+# Sent as one PostgreSQL command so autocommit still installs the migration and
+# its immutability guards in one implicit transaction.
+REVIEW_SCHEMA = REVIEW_MIGRATION + REVIEW_IMMUTABILITY

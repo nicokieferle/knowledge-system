@@ -26,6 +26,7 @@ from knowledge_system.proposal_review import (
     ReviewMissing,
 )
 from knowledge_system.proposal_store import PostgresProposalStore, ProposalCreate
+from knowledge_system.review_schema import REVIEW_SCHEMA
 from knowledge_system.review_store import PostgresReviewStore
 from knowledge_system.sources import GitMarkdownSource
 
@@ -56,6 +57,39 @@ def database(tmp_path):
 def initialize(settings):
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
         init_conversation_schema(conn)
+
+
+def v312_statements():
+    original = subprocess.run(
+        [
+            "git",
+            "show",
+            "92b25474b94a3d4a369e50363cc3df68a2fba62c:src/knowledge_system/conversation_schema.py",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return next(
+        ast.literal_eval(node.value)
+        for node in ast.walk(ast.parse(original))
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "statements" for t in node.targets)
+    )
+
+
+def test_review_schema_is_atomic_on_autocommit_failure(database):
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        for statement in v312_statements():
+            conn.execute(statement)
+        with pytest.raises(psycopg.Error):
+            conn.execute(REVIEW_SCHEMA + "\nSELECT definitely_missing_v32_function();")
+        assert conn.execute("SELECT to_regclass('proposal_reviews')").fetchone()[0] is None
+        status = conn.execute(
+            """SELECT pg_get_constraintdef(oid) FROM pg_constraint
+            WHERE conrelid='proposals'::regclass AND conname='proposals_status_check'"""
+        ).fetchone()[0]
+        assert "accepted" not in status
 
 
 def seed(settings):
@@ -89,24 +123,8 @@ def seed(settings):
 
 
 def test_migrates_real_v312_schema_preserves_proposal_and_is_repeatable(database):
-    original = subprocess.run(
-        [
-            "git",
-            "show",
-            "92b25474b94a3d4a369e50363cc3df68a2fba62c:src/knowledge_system/conversation_schema.py",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    statements = next(
-        ast.literal_eval(node.value)
-        for node in ast.walk(ast.parse(original))
-        if isinstance(node, ast.Assign)
-        and any(isinstance(t, ast.Name) and t.id == "statements" for t in node.targets)
-    )
     with psycopg.connect(database.database_url, autocommit=True) as conn:
-        for statement in statements:
+        for statement in v312_statements():
             conn.execute(statement)
     service, who, p = seed(database)
     initialize(database)
