@@ -43,9 +43,12 @@ chmod 0600 "${temporary_file}"
   printf 'pg_dump produced an empty archive\n' >&2
   exit 1
 }
+"${COMPOSE_COMMAND[@]}" exec -T postgres pg_restore --list \
+  <"${temporary_file}" >/dev/null
 mv -- "${temporary_file}" "${final_file}"
 trap - EXIT
 
 printf 'backup_file=%s\n' "${final_file}"
 printf 'backup_bytes=%s\n' "$(wc -c <"${final_file}")"
 printf 'backup_format=custom\n'
+printf 'backup_archive_check=pass\n'

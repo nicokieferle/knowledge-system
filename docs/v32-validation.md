@@ -37,6 +37,13 @@ immutable audit records. A real custom pg_dump archive is listed and restored
 into a fresh test database; the complete durable fingerprint and accepted review
 reference match afterward.
 
+The backup/restore follow-up additionally exercises all ten durable tables with multiple
+review revisions, accepted and deferred decisions, and an exact source/restore fingerprint.
+Only `proposals_accepted_review_fk` is initially deferred; all foreign keys are validated and
+all immutability triggers remain enabled after restore. A synthetic final failure proves
+the single transaction leaves all ten target tables empty. `pg_restore --list` remains a quick
+archive check, not the recoverability proof; see `v32-backup-restore-hardening.md`.
+
 The follow-up review corrected snapshot stability to compare device/inode, file
 type, size, mtime and ctime while deliberately ignoring atime. An old-atime Linux
 regression proves a normal read remains valid. Portable case-collision checks now

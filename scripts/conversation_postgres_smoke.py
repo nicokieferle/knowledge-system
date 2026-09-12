@@ -156,7 +156,7 @@ def run_smoke(settings: Settings) -> dict[str, object]:
             for row in conn.execute(
                 """
                 SELECT tablename FROM pg_tables
-                WHERE schemaname = 'public' AND tablename = ANY(%s)
+                WHERE schemaname = current_schema() AND tablename = ANY(%s)
                 """,
                 (list(DURABLE_TABLES),),
             ).fetchall()
