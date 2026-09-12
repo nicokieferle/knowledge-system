@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from knowledge_system.durable_state import DURABLE_TABLES
 from knowledge_system.review_schema import REVIEW_SCHEMA
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PROJECT_ROOT / "scripts"
+
+
+def _bash() -> str | None:
+    if os.name == "nt":
+        candidate = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git/bin/bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return shutil.which("bash")
 
 
 def test_backup_uses_restrictive_custom_format_and_shared_table_allowlist() -> None:
@@ -103,6 +116,34 @@ def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     assert "--clean" not in restore
     assert "DROP " not in restore
     assert "TRUNCATE " not in restore
+
+
+@pytest.mark.parametrize(
+    "database",
+    (
+        "dbname=knowledge",
+        "postgresql:///knowledge",
+        "knowledge host=elsewhere",
+        "knowledge\nother",
+    ),
+)
+def test_restore_rejects_database_connection_aliases_before_docker(database: str) -> None:
+    bash = _bash()
+    if bash is None:
+        pytest.skip("bash is required to exercise the restore entry point")
+
+    result = subprocess.run(
+        [bash, str(SCRIPTS / "restore_durable_state.sh"), str(PROJECT_ROOT / "README.md")],
+        cwd=PROJECT_ROOT,
+        env={**os.environ, "RESTORE_DATABASE": database},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr == "RESTORE_DATABASE must be a simple local database name\n"
 
 
 def test_only_the_cyclic_accepted_review_fk_is_initially_deferred() -> None:

@@ -17,6 +17,10 @@ if [[ -z "${RESTORE_DATABASE}" ]]; then
   printf 'RESTORE_DATABASE is required and must identify a fresh database\n' >&2
   exit 2
 fi
+if [[ ! "${RESTORE_DATABASE}" =~ ^[A-Za-z_][A-Za-z0-9_]{0,62}$ ]]; then
+  printf 'RESTORE_DATABASE must be a simple local database name\n' >&2
+  exit 2
+fi
 
 cd "${PROJECT_ROOT}"
 configure_compose_command
