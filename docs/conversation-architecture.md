@@ -1,5 +1,17 @@
 # Conversation architecture
 
+## V3.2.1 client boundary (supersedes historical Telegram review below)
+
+`TelegramAdapter -> ConversationService -> ProposalService` collects pending proposals.
+`review-web -> ProposalReviewService -> PostgresReviewStore / GitMarkdownSource` is
+the only review/decision client. Telegram never constructs a review service. Legacy
+rv:/pv: callbacks are information-only before ID parsing or domain dispatch.
+
+The web principal maps explicitly to the full existing client identity tuple. Queue
+and provenance queries enforce that tuple, independent of active/recent topic limits.
+Existing originating_message_ids load user messages inside the owned conversation;
+no new durable table or migration is needed. See `v321-browser-review.md`.
+
 ## Boundary
 
 V3.0 adds persistent conversation and proposal intent handling without coupling the core to

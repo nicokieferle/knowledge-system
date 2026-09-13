@@ -3,6 +3,19 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_review_service_is_private_and_separate():
+    compose = (PROJECT_ROOT / "compose.server.yml").read_text(encoding="utf-8")
+    review = compose.split("  review-web:", 1)[1]
+    assert 'command: ["knowledge-review"]' in review
+    assert "host_ip: ${REVIEW_BIND_ADDRESS:-127.0.0.1}" in review
+    assert "REVIEW_MODE: production" in review
+    assert "REVIEW_PASSWORD_HASH: ${REVIEW_PASSWORD_HASH:?" in review
+    assert "REVIEW_SESSION_SECRET: ${REVIEW_SESSION_SECRET:?" in review
+    assert "read_only: true" in review and "cap_drop: [ALL]" in review
+    assert "docker.sock" not in review and "privileged:" not in review
+    assert "TELEGRAM_BOT_TOKEN" not in review and "LLM_API_KEY" not in review
+
+
 def test_server_compose_preserves_local_only_and_persistent_boundaries() -> None:
     compose = (PROJECT_ROOT / "compose.server.yml").read_text(encoding="utf-8")
 

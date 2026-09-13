@@ -1,25 +1,29 @@
 # Knowledge System
 
-## V3.2: Proposal Review (development)
+## V3.2.1: Private Browser-Review-Konsole (development)
+
+**Telegram sammelt. Der Browser prüft und entscheidet. Das Backend erzwingt
+Sicherheit und Konsistenz.** Der separate `knowledge-review`-Prozess bietet eine
+private, serverseitig gerenderte Review-Queue mit Single-Admin-Anmeldung, CSRF-Schutz
+und vollständiger Diff-Ansicht. Siehe [Design und lokaler Start](docs/v321-browser-review.md).
+
+Telegram erstellt weiterhin Vorschläge nach Bestätigung. `/proposals`, `/proposal`
+und `/proposal-refresh` geben nur noch einen Browser-Hinweis aus. Alte Review-Buttons
+sind serverseitig wirkungslos; Telegram liefert keine Diffs oder Entscheidungen mehr.
+
+**Akzeptieren bindet ausschließlich die angezeigte unveränderliche Revision.**
+Kein Markdown-/Git-Write, kein Apply, keine Indexierung. V3.3 bleibt ausstehend.
+
+## V3.2: Clientneutrale Review-Domain
 
 V3.1.2 is the production-tested baseline. V3.2 adds a client-neutral
 `ProposalReviewService`: inspect pending proposals, prepare immutable review revisions,
 then Accept, Reject or Defer. **Accept stores consent only: no Markdown/Git write and
 no reindex.** V3.3 will apply the exact accepted bytes only after rechecking the base.
 
-Telegram commands:
-
-- `/proposals`: up to 100 open/deferred proposals of the current owned topic.
-- `/proposal <uuid>`: show an existing revision, or safely prepare the first one.
-  A small full diff is shown inline; a larger diff is sent once as an in-memory
-  UTF-8 `.diff` document. Revision-bound buttons follow only after the complete
-  inline diff or document was transferred successfully.
-- `/proposal-refresh <uuid>`: explicitly prepare/show a fresh revision from the draft
-  and current source. Old revisions remain intact; old Accept buttons cannot accept it.
-
-Invalid legacy targets have Reject/Defer but no Accept. A trusted application client
-can correct target/content via `prepare(..., target_source_path=..., new_content=...)`;
-Telegram does not expose a Markdown editor. See [review design](docs/v32-review-design.md).
+Im Browser benötigt jede Entscheidung eine konkrete Revision. Ungültige Legacy-Ziele
+können dort ausdrücklich korrigiert werden; die sichere Pfad-/Inhaltsprüfung bleibt
+unverändert. Siehe auch [historisches Domain-Design](docs/v32-review-design.md).
 
 ## V3.1: real chat, Telegram, and topic routing
 

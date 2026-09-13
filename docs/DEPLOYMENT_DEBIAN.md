@@ -1,5 +1,23 @@
 # Debian 12 Docker deployment
 
+## V3.2.1 private review console (separate future rollout)
+
+This change does not deploy anything. `review-web` is an independent, non-root,
+read-only-root service with a read-only knowledge mount, no model cache and no
+Telegram/MCP dependency. It requires configured Argon2id/session secrets and an
+explicit owner mapping; empty example secrets intentionally fail closed.
+
+Host publication defaults to `127.0.0.1:8080` even when REVIEW_BIND_ADDRESS is empty.
+Only the isolated container process listens on 0.0.0.0. Later WireGuard binding
+requires an explicitly reviewed host address and private HTTPS termination; never
+use a wildcard host binding. No firewall, proxy, DNS or WireGuard configuration is
+changed here. Production cookies require HTTPS. Keep loopback `127.0.0.1:8080` in
+REVIEW_ALLOWED_HOSTS for `/healthz`, which exposes only process readiness, not DB data.
+
+See [setup, secrets, owner mapping and local tests](v321-browser-review.md). No new
+schema/tables or backup-scope changes are introduced. Existing ten-table durable
+backup/restore protection remains required. V3.3 apply/index is not part of startup.
+
 ## V3.2 durable review migration (not deployed by this change)
 
 Before a separately authorized rollout, take a V3.1.2 durable backup using the old
