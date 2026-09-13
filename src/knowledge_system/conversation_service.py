@@ -23,9 +23,7 @@ from .proposal_service import ProposalService
 from .proposal_store import ProposalSuggestionStateError
 
 EXPLICIT_PROPOSAL_COMMANDS = frozenset({"/remember", "/propose"})
-SUGGESTION_CONFIRMATION_TEXT = (
-    "Das könnte sich für deine Wissensbasis eignen. Soll ich daraus einen Wissensvorschlag machen?"
-)
+SUGGESTION_CONFIRMATION_TEXT = "Das könnte sich für deine Wissensbasis eignen. Soll ich daraus einen Wissensvorschlag erstellen?"
 
 
 @dataclass(frozen=True)

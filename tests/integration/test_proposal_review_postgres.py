@@ -257,7 +257,7 @@ def test_concurrent_defer_and_terminal_decision_use_status_cas(database, other):
     assert results.count("conflict") == 1
 
 
-def test_telegram_callback_retry_is_one_durable_decision(database):
+def test_legacy_telegram_callback_retry_never_mutates_durable_state(database):
     from knowledge_system.telegram_review import TelegramReview
     from tests.test_telegram_adapter import FakeTransport
 
@@ -265,13 +265,15 @@ def test_telegram_callback_retry_is_one_durable_decision(database):
     service, who, p = seed(database)
     r = service.prepare(who, p.id).revision
     transport = FakeTransport()
-    ui = TelegramReview(service, PostgresClientStateStore(database), transport)
+    ui = TelegramReview(transport)
     data = f"rv:a:{r.id.hex}"
     ui.callback(who, "callback-1", data)
     ui.callback(who, "callback-1", data)
     assert transport.callbacks[0] == transport.callbacks[1]
     with psycopg.connect(database.database_url, autocommit=True) as conn:
-        assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 1
+        assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 0
+        assert service.get(who, p.id).proposal.status == "pending"
+        service.decide(who, p.id, r.id, ProposalStatus.ACCEPTED)
         with pytest.raises(psycopg.Error):
             conn.execute(
                 "UPDATE proposals SET status='pending', accepted_review_id=NULL WHERE id=%s",
