@@ -1,6 +1,8 @@
 import re
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from threading import Barrier, Event
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -321,35 +323,126 @@ def test_full_anonymous_session_store_evicts_oldest_for_new_login_session():
 
 def test_anonymous_session_eviction_preserves_authenticated_session():
     sessions = Sessions(web_settings())
-    oldest = sessions.create()
     authenticated = sessions.create(authenticated=True)
-    for _ in range(254):
-        sessions.create()
-
-    sessions.create()
-
-    assert oldest.id not in sessions.entries
-    assert sessions.entries[authenticated.id] == authenticated
-
-
-def test_full_authenticated_session_store_fails_closed():
-    sessions = Sessions(web_settings())
-    for _ in range(256):
-        sessions.create(authenticated=True)
-    with pytest.raises(OverflowError):
-        sessions.create()
-
-
-def test_expired_session_is_cleaned_before_anonymous_eviction():
-    clock = [1000.0]
-    sessions = Sessions(web_settings(), clock=lambda: clock[0])
-    expired = sessions.create()
-    clock[0] += 601
-    survivors = [sessions.create() for _ in range(255)]
+    oldest_anonymous = sessions.create()
+    survivors = [sessions.create() for _ in range(254)]
 
     replacement = sessions.create()
 
-    assert expired.id not in sessions.entries
+    assert len(sessions.entries) == 256
+    assert sessions.entries[authenticated.id] == authenticated
+    assert oldest_anonymous.id not in sessions.entries
     assert survivors[0].id in sessions.entries
     assert replacement.id in sessions.entries
+
+
+def test_full_authenticated_session_store_fails_closed_without_mutation():
+    sessions = Sessions(web_settings())
+    for _ in range(256):
+        sessions.create(authenticated=True)
+    before = list(sessions.entries.items())
+
+    with pytest.raises(OverflowError):
+        sessions.create()
+
+    assert list(sessions.entries.items()) == before
+    assert all(session.authenticated for session in sessions.entries.values())
+
+
+def test_expired_session_is_cleaned_at_capacity_before_anonymous_eviction():
+    clock = [1000.0]
+    sessions = Sessions(replace(web_settings(), session_seconds=60), clock=lambda: clock[0])
+    expired_authenticated = sessions.create(authenticated=True)
+    oldest_live_anonymous = sessions.create()
+    for _ in range(254):
+        sessions.create()
     assert len(sessions.entries) == 256
+
+    clock[0] += 61
+    replacement = sessions.create()
+
+    assert len(sessions.entries) == 256
+    assert expired_authenticated.id not in sessions.entries
+    assert oldest_live_anonymous.id in sessions.entries
+    assert replacement.id in sessions.entries
+
+
+class _TrackingEntries(dict):
+    def __init__(self, entries):
+        super().__init__(entries)
+        self.max_size = len(self)
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self.max_size = max(self.max_size, len(self))
+
+
+def test_parallel_anonymous_eviction_stays_bounded_and_preserves_authenticated_sessions():
+    sessions = Sessions(web_settings())
+    authenticated = [sessions.create(authenticated=True) for _ in range(8)]
+    for _ in range(242):
+        sessions.create()
+    sessions.entries = _TrackingEntries(sessions.entries)
+    worker_count = 16
+    start = Barrier(worker_count + 1)
+
+    def create_after_barrier():
+        start.wait(timeout=5)
+        return sessions.create()
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(create_after_barrier) for _ in range(worker_count)]
+        start.wait(timeout=5)
+        created = [future.result(timeout=5) for future in futures]
+
+    assert len(sessions.entries) == 256
+    assert sessions.entries.max_size <= 256
+    assert all(session.id in sessions.entries for session in authenticated)
+    assert len({session.id for session in created}) == len(created)
+    assert all(session.id in sessions.entries for session in created)
+    assert all(session.id == sid for sid, session in sessions.entries.items())
+
+
+def test_concurrent_login_rotation_and_eviction_preserve_rotated_session():
+    sessions = Sessions(web_settings())
+    authenticated = [sessions.create(authenticated=True) for _ in range(4)]
+    login_session = sessions.create()
+    for _ in range(251):
+        sessions.create()
+    sessions.entries = _TrackingEntries(sessions.entries)
+    verify_started = Event()
+    allow_verify = Event()
+    worker_count = 8
+    insert_start = Barrier(worker_count + 1)
+
+    class BlockingHasher:
+        def verify(self, password_hash, password):
+            assert password_hash == sessions.settings.password_hash
+            assert password == PASSWORD
+            verify_started.set()
+            assert allow_verify.wait(timeout=5)
+
+    sessions.hasher = BlockingHasher()
+
+    def create_after_barrier():
+        insert_start.wait(timeout=5)
+        return sessions.create()
+
+    with ThreadPoolExecutor(max_workers=worker_count + 1) as executor:
+        login_future = executor.submit(sessions.login, login_session, PASSWORD)
+        assert verify_started.wait(timeout=5)
+        create_futures = [executor.submit(create_after_barrier) for _ in range(worker_count)]
+        insert_start.wait(timeout=5)
+        allow_verify.set()
+        rotated = login_future.result(timeout=5)
+        created = [future.result(timeout=5) for future in create_futures]
+
+    assert rotated is not None and rotated.authenticated
+    assert len(sessions.entries) == 256
+    assert sessions.entries.max_size <= 256
+    assert login_session.id not in sessions.entries
+    assert sessions.entries[rotated.id] == rotated
+    assert sum(session.id == rotated.id for session in sessions.entries.values()) == 1
+    assert all(session.id in sessions.entries for session in authenticated)
+    assert len({session.id for session in created}) == len(created)
+    assert all(session.id == sid for sid, session in sessions.entries.items())
