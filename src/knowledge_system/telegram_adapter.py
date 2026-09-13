@@ -9,7 +9,6 @@ from .conversation_models import ConversationAction, ConversationTurnResult
 from .conversation_router import ConversationRouter
 from .conversation_service import ConversationService
 from .conversation_store import ConversationNotFoundError
-from .proposal_review import ProposalReviewService
 from .proposal_store import ProposalSuggestionNotFoundError, ProposalSuggestionStateError
 
 
@@ -55,18 +54,18 @@ class TelegramAdapter:
         service: ConversationService,
         states: ClientStateStore,
         transport: TelegramTransport,
-        review_service: ProposalReviewService | None = None,
+        review_base_url: str = "",
     ) -> None:
         self.router, self.service, self.states, self.transport = router, service, states, transport
         from .telegram_review import TelegramReview
 
-        self.review = TelegramReview(review_service, states, transport) if review_service else None
+        self.review = TelegramReview(transport, review_base_url)
 
     def handle_message(self, message: TelegramMessage) -> None:
         identity = ClientIdentity("telegram", message.chat_id, message.user_id)
         text = message.text.strip()
         command, _, argument = text.partition(" ")
-        if command in ("/proposals", "/proposal", "/proposal-refresh") and self.review:
+        if command in ("/proposals", "/proposal", "/proposal-refresh"):
             self.review.command(identity, command, argument.strip())
             return
         if command == "/new":
@@ -109,7 +108,7 @@ class TelegramAdapter:
 
     def handle_callback(self, callback: TelegramCallback) -> None:
         identity = ClientIdentity("telegram", callback.chat_id, callback.user_id)
-        if callback.data.startswith(("rv:", "pv:")) and self.review:
+        if callback.data.startswith(("rv:", "pv:")):
             self.review.callback(identity, callback.callback_id, callback.data)
             return
         try:
@@ -120,13 +119,13 @@ class TelegramAdapter:
                 raise ValueError
             external_id = f"telegram:callback:{callback.callback_id}"
             if action == "save":
-                result = self.service.confirm_suggestion(
+                self.service.confirm_suggestion(
                     conversation_id,
                     suggestion_id,
                     "Bestätigt",
                     external_message_id=external_id,
                 )
-                text = f"Vorschlag erstellt: {result.proposal_id}"
+                text = "Wissensvorschlag erstellt und zur Prüfung vorgemerkt."
             elif action == "reject":
                 self.service.reject_suggestion(
                     conversation_id,
@@ -134,7 +133,7 @@ class TelegramAdapter:
                     "Abgelehnt",
                     external_message_id=external_id,
                 )
-                text = "Nicht gespeichert."
+                text = "Kein Wissensvorschlag erstellt."
             else:
                 raise ValueError
         except (ValueError, ProposalSuggestionStateError):
@@ -160,9 +159,12 @@ class TelegramAdapter:
             self.transport.send_message(
                 chat_id,
                 result.assistant_message.content,
-                (("Speichern", f"save:{sid}"), ("Nein", f"reject:{sid}")),
+                (("Ja, Vorschlag erstellen", f"save:{sid}"), ("Nein", f"reject:{sid}")),
             )
         elif result.action is ConversationAction.PROPOSAL_CREATED:
-            self.transport.send_message(chat_id, f"Vorschlag erstellt: {result.proposal_id}")
+            text = "Wissensvorschlag erstellt und zur Prüfung vorgemerkt."
+            if self.review.base_url and result.proposal_id:
+                text += f"\n{self.review.base_url}/reviews/{result.proposal_id}"
+            self.transport.send_message(chat_id, text)
         elif result.assistant_message:
             self.transport.send_message(chat_id, result.assistant_message.content)

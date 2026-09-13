@@ -1,5 +1,11 @@
 # V3.2 implementation decision
 
+**Historical V3.2 client design:** V3.2.1 supersedes the Telegram UI, callback and
+implicit-first-display preparation described below. Reviews/decisions now exist
+only in the private browser client; all preparation requires POST. Domain values,
+immutability, path validation and decision transactions remain authoritative.
+See [V3.2.1](v321-browser-review.md).
+
 Base: `92b25474b94a3d4a369e50363cc3df68a2fba62c` (expected main).
 
 The existing proposal is an untrusted draft, not an approved patch. Keep it intact.

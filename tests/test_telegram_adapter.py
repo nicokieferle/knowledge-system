@@ -190,7 +190,7 @@ def test_remember_creates_proposal_without_chat_model():
     adapter.handle_message(TelegramMessage("10", "20", "2", "/remember important"))
     assert len(proposals.state.proposals) == 1
     assert len(chat.contexts) == 0
-    assert "Vorschlag erstellt" in transport.messages[-1][1]
+    assert "Wissensvorschlag erstellt und zur Prüfung vorgemerkt." in transport.messages[-1][1]
 
 
 def test_suggestion_buttons_confirmation_is_idempotent_and_reject_creates_none():

@@ -86,6 +86,11 @@
 
 ## V3.3 — safe Git apply
 
+V3.2.1 adds the private browser review console (implementation, not deployed):
+single-admin auth, session-bound CSRF, owned paginated queue, explicit immutable
+review preparation and revision-bound decisions. Telegram only collects proposals;
+legacy review callbacks have no domain capability. See `v321-browser-review.md`.
+
 - [ ] isolated Git branch generation
 - [ ] guarded canonical knowledge writes after approval
 - [ ] reindex after reviewed merge
