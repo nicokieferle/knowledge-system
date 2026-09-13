@@ -17,6 +17,7 @@ from .conversation_models import Proposal
 
 LOG = logging.getLogger(__name__)
 MAX_REVIEW_BYTES = 128_000
+_UNOBSERVED = object()
 
 
 class ReviewError(RuntimeError):
@@ -145,11 +146,38 @@ class ReviewView:
     accepted_review_id: UUID | None
 
 
+@dataclass(frozen=True)
+class ReviewQueueItem:
+    id: UUID
+    status: str
+    created_at: datetime
+    target: str | None
+    snippet: str | None
+    revision_number: int | None
+
+
+@dataclass(frozen=True)
+class ReviewPage:
+    items: tuple[ReviewQueueItem, ...]
+    total: int
+    open_count: int
+
+
+@dataclass(frozen=True)
+class ReviewContext:
+    message_id: int
+    content: str
+
+
 class ReviewSource(Protocol):
     def snapshot(self, source_id: str, path: str) -> tuple[str, str | None]: ...
 
 
 class ReviewStore(Protocol):
+    def queue(
+        self, identity: ClientIdentity, statuses: tuple[str, ...], offset: int, limit: int
+    ) -> ReviewPage: ...
+    def context(self, identity: ClientIdentity, proposal_id: UUID) -> tuple[ReviewContext, ...]: ...
     def proposal_for_revision(self, identity: ClientIdentity, review_id: UUID) -> UUID: ...
     def get(self, identity: ClientIdentity, proposal_id: UUID) -> ReviewView: ...
     def list(self, identity: ClientIdentity, conversation_id: UUID) -> tuple[Proposal, ...]: ...
@@ -177,6 +205,20 @@ class ProposalReviewService:
     def get(self, identity: ClientIdentity, proposal_id: UUID) -> ReviewView:
         return self.store.get(identity, proposal_id)
 
+    def queue(
+        self, identity: ClientIdentity, statuses: tuple[str, ...], offset: int = 0, limit: int = 30
+    ) -> ReviewPage:
+        if not statuses or any(
+            s not in {status.value for status in ProposalStatus} for s in statuses
+        ):
+            raise ValueError("Invalid status filter")
+        if not 0 <= offset <= 1_000_000 or not 1 <= limit <= 100:
+            raise ValueError("Invalid pagination")
+        return self.store.queue(identity, statuses, offset, limit)
+
+    def context(self, identity: ClientIdentity, proposal_id: UUID) -> tuple[ReviewContext, ...]:
+        return self.store.context(identity, proposal_id)
+
     def decide_revision(
         self, identity: ClientIdentity, review_id: UUID, status: ProposalStatus
     ) -> ReviewView:
@@ -194,8 +236,14 @@ class ProposalReviewService:
         target_source_id: str | None = None,
         target_source_path: str | None = None,
         new_content: str | None = None,
+        expected_review_id=_UNOBSERVED,
     ) -> ReviewView:
         view = self.get(identity, proposal_id)
+        if (
+            expected_review_id is not _UNOBSERVED
+            and (view.revision.id if view.revision else None) != expected_review_id
+        ):
+            raise ReviewConflict()
         if view.proposal.status not in ("pending", "deferred"):
             raise InvalidTransition()
         p = view.proposal
@@ -244,6 +292,8 @@ class ProposalReviewService:
         proposal_id: UUID,
         review_id: UUID | None,
         status: ProposalStatus,
+        *,
+        expected_status: str | None = None,
     ) -> ReviewView:
         status = ProposalStatus(status)
         view = self.get(identity, proposal_id)
@@ -255,4 +305,10 @@ class ProposalReviewService:
             # An identical terminal retry does not re-authorize changed source contents.
             if view.proposal.status != "accepted":
                 self.check_basis(view.revision)
-        return self.store.decide(identity, proposal_id, review_id, status, view.proposal.status)
+        return self.store.decide(
+            identity,
+            proposal_id,
+            review_id,
+            status,
+            expected_status if expected_status is not None else view.proposal.status,
+        )

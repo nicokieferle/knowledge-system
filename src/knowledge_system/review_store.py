@@ -13,8 +13,11 @@ from .proposal_review import (
     ProposalStatus,
     ReviewConflict,
     ReviewContent,
+    ReviewContext,
     ReviewForbidden,
     ReviewMissing,
+    ReviewPage,
+    ReviewQueueItem,
     ReviewRevision,
     ReviewView,
     content_hash,
@@ -94,6 +97,51 @@ class PostgresReviewStore:
     def get(self, identity, proposal_id):
         with self._connect(self.settings) as conn, conn.transaction():
             return self._view(conn, identity, proposal_id)
+
+    def context(self, identity, proposal_id):
+        with self._connect(self.settings) as conn, conn.transaction():
+            p = self._view(conn, identity, proposal_id).proposal
+            # Originating messages exclude command/confirmation control input. Never
+            # resolve IDs outside the authorized conversation, even for legacy arrays.
+            rows = conn.execute(
+                """SELECT id, content FROM messages WHERE conversation_id=%s
+                AND id=ANY(%s) AND role='user' AND NOT (metadata ? 'control')
+                ORDER BY id""",
+                (p.conversation_id, list(p.originating_message_ids)),
+            ).fetchall()
+            return tuple(ReviewContext(*row) for row in rows)
+
+    def queue(self, identity, statuses, offset, limit):
+        owned = """EXISTS (SELECT 1 FROM client_conversations cc
+            WHERE cc.conversation_id=p.conversation_id AND cc.client_type=%s
+            AND cc.external_chat_id=%s AND cc.external_user_id=%s)"""
+        key = (identity.client_type, identity.external_chat_id, identity.external_user_id)
+        with self._connect(self.settings) as conn, conn.transaction():
+            # Counts and page share one snapshot; GET never creates a review.
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            total, open_count = conn.execute(
+                "SELECT count(*) FILTER (WHERE status=ANY(%s)), "
+                "count(*) FILTER (WHERE status IN ('pending','deferred')) "
+                "FROM proposals p WHERE " + owned,
+                (list(statuses), *key),
+            ).fetchone()
+            rows = conn.execute(
+                """SELECT p.id, p.status, p.created_at,
+                COALESCE(r.target_source_path,p.target_source_path),
+                (SELECT left(m.content,240) FROM messages m
+                 WHERE m.conversation_id=p.conversation_id
+                 AND m.id=ANY(p.originating_message_ids) AND m.role='user'
+                 AND NOT (m.metadata ? 'control') ORDER BY m.id DESC LIMIT 1), r.revision
+                FROM proposals p LEFT JOIN LATERAL
+                (SELECT revision,target_source_path FROM proposal_reviews
+                 WHERE proposal_id=p.id ORDER BY revision DESC LIMIT 1) r ON true
+                WHERE """
+                + owned
+                + " AND p.status=ANY(%s) "
+                "ORDER BY p.created_at DESC,p.id DESC LIMIT %s OFFSET %s",
+                (*key, list(statuses), limit, offset),
+            ).fetchall()
+            return ReviewPage(tuple(ReviewQueueItem(*row) for row in rows), total, open_count)
 
     def proposal_for_revision(self, identity, review_id):
         with self._connect(self.settings) as conn, conn.transaction():

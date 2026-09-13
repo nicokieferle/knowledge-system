@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Vorschlag prüfen{% endblock %}
+{% block content %}
+<a href="/reviews">← Zur Queue</a>
+<p class="eyebrow">Vorschlag prüfen</p><h1>{{ view.proposal.title or 'Wissensvorschlag' }}</h1>
+<p><span class="badge {{ view.proposal.status }}">{{ labels[view.proposal.status] }}</span> · {{ view.proposal.created_at.strftime('%d.%m.%Y %H:%M UTC') }}</p>
+<p>{{ view.proposal.summary }}</p><p>{{ view.proposal.reason }}</p>
+<section><h2>Ursprüngliche Aussage</h2>
+{% for message in context %}<blockquote><p class="preserve">{{ message.content }}</p><small>Nachricht {{ message.message_id }}</small></blockquote>
+{% else %}<p>Ursprüngliche Aussage für diesen älteren Vorschlag nicht verfügbar.</p>{% endfor %}
+<small>Nur Review-Kontext. Keine automatische Übernahme.</small></section>
+{% if stale %}<p class="warning" role="alert">Die Basis ist nicht mehr aktuell oder nicht sicher lesbar. Vor Akzeptieren das Review aktualisieren.</p>{% endif %}
+{% if view.revision %}{% set r = view.revision %}
+<h2>Revision {{ r.number }}</h2><p class="path">Ziel: {{ r.content.target_source_path }}</p>
+<details><summary>Technische Referenzen</summary><dl>
+<dt>Proposal-ID</dt><dd>{{ view.proposal.id }}</dd><dt>Conversation-ID</dt><dd>{{ view.proposal.conversation_id }}</dd>
+<dt>Review-ID</dt><dd>{{ r.id }}</dd><dt>Basis</dt><dd>{{ r.content.base_revision }}</dd>
+<dt>Alttext SHA-256</dt><dd>{{ r.content.old_hash or 'Neue Datei' }}</dd><dt>Neutext SHA-256</dt><dd>{{ r.content.new_hash }}</dd>
+<dt>Akzeptierte Review-ID</dt><dd>{{ view.accepted_review_id or 'Keine' }}</dd></dl></details>
+<section><h2>Vollständiger Diff</h2><p>+ hinzugefügt · − entfernt · @@ Abschnitt · sichtbare Escape-Zeichen für CR/Tab</p>
+<pre class="diff" tabindex="0" aria-label="Vollständiger Diff">{% for line in r.content.diff.splitlines(keepends=True) %}<span class="{% if line.startswith(('+++','---','@@','\\')) %}diff-header{% elif line.startswith('+') %}added{% elif line.startswith('-') %}removed{% else %}context{% endif %}">{{ line }}</span>{% endfor %}</pre></section>
+<div class="texts"><details><summary>Vollständiger Alttext</summary><pre class="source">{{ r.content.old_content if r.content.old_content is not none else 'Datei existiert noch nicht.' }}</pre></details>
+<details><summary>Vollständiger Neutext</summary><pre class="source">{{ r.content.new_content }}</pre></details></div>
+{% else %}<p class="warning">Noch keine Review-Revision. Bitte Ziel prüfen und Review erzeugen.</p>{% endif %}
+{% if mutable %}
+<section><h2>Review aktualisieren</h2><p>Erzeugt eine unveränderliche Revision mit aktueller Dateibasis. Identischer Inhalt wird wiederverwendet.</p>
+<form method="post" action="/reviews/{{ view.proposal.id }}/refresh">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<input type="hidden" name="review_id" value="{{ view.revision.id if view.revision else '' }}">
+<label for="target">Relativer Zielpfad in knowledge/</label><input id="target" name="target" maxlength="1024" required value="{{ view.revision.content.target_source_path if view.revision else (view.proposal.target_source_path or '') }}">
+<details><summary>Kandidateninhalt ausdrücklich bearbeiten</summary><label><input type="checkbox" name="edit_content" value="yes"> Bearbeiteten Inhalt als neuen Kandidaten verwenden</label><p>Nur mit dieser Auswahl wird der Text als neuer Kandidat verwendet. Der Browser normalisiert beim Bearbeiten Zeilenumbrüche; prüfe die neue Revision vollständig.</p><label for="content">Vollständiger neuer Markdown-Inhalt (maximal 128.000 UTF-8-Bytes)</label><textarea id="content" name="content" rows="12">{{ view.revision.content.new_content if view.revision else view.proposal.proposed_content }}</textarea></details>
+<button>Review aktualisieren</button></form></section>
+{% if view.revision %}<section><h2>Entscheidung für Revision {{ view.revision.number }}</h2><p>Akzeptieren ist kein Anwenden. Ablehnen und Zurückstellen bleiben auch bei stale Basis möglich.</p>
+<div class="decisions">{% for action,label in [('accept','Akzeptieren'),('defer','Später entscheiden'),('reject','Ablehnen')] %}
+{% if not (action == 'defer' and view.proposal.status == 'deferred') %}
+<form method="post" action="/reviews/{{ view.proposal.id }}/{{ action }}">
+<input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="review_id" value="{{ view.revision.id }}"><input type="hidden" name="status" value="{{ view.proposal.status }}">
+<button class="{{ action }}" {% if action == 'accept' and stale %}disabled{% endif %}>{{ label }}</button></form>{% endif %}{% endfor %}</div></section>{% endif %}
+{% else %}<p class="notice">Diese Entscheidung ist abgeschlossen. Es sind keine weiteren Entscheidungen möglich.</p>{% endif %}
+{% endblock %}
