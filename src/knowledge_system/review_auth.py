@@ -134,10 +134,19 @@ class Sessions:
             if session.expires <= now:
                 del self.entries[sid]
 
+    def _evict_oldest_anonymous(self) -> bool:
+        oldest = next(
+            (sid for sid, session in self.entries.items() if not session.authenticated), None
+        )
+        if oldest is None:
+            return False
+        self.entries.pop(oldest)
+        return True
+
     def create(self, authenticated=False):
         with self.lock:
             self._expire()
-            if len(self.entries) >= 256:
+            if len(self.entries) >= 256 and (authenticated or not self._evict_oldest_anonymous()):
                 raise OverflowError("Session capacity")
             s = Session(
                 secrets.token_urlsafe(32),

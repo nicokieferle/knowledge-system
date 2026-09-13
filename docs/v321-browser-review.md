@@ -40,8 +40,12 @@ after REVIEW_SESSION_SECONDS (default 3600, range 60–86400); login sessions af
 minutes. Restart or secret rotation invalidates all sessions. Exactly one worker:
 do not add replicas/workers without a shared session and throttle design.
 
-Memory is capped at 256 sessions. A global rolling limit of five password checks
-per minute bounds Argon2 work and prevents IP/proxy-header spoofing of the throttle.
+Memory is capped at 256 sessions. Expired records are removed before capacity is
+evaluated. When a new anonymous login session reaches the cap, only the oldest
+anonymous session is evicted; authenticated sessions are never evicted for a login
+page. A store containing only authenticated sessions fails closed. A global rolling
+limit of five password checks per minute bounds Argon2 work and prevents
+IP/proxy-header spoofing of the throttle.
 An attacker on the private network can temporarily exhaust login capacity; this is
 a deliberate small single-admin tradeoff, not a public Internet authentication system.
 

@@ -306,9 +306,50 @@ def test_legacy_unprepared_path_is_escaped(web):
     assert payload not in response.text and "&lt;img" in response.text
 
 
-def test_session_capacity_is_bounded():
+def test_full_anonymous_session_store_evicts_oldest_for_new_login_session():
+    sessions = Sessions(web_settings())
+    oldest = sessions.create()
+    for _ in range(255):
+        sessions.create()
+
+    replacement = sessions.create()
+
+    assert len(sessions.entries) == 256
+    assert oldest.id not in sessions.entries
+    assert replacement.id in sessions.entries
+
+
+def test_anonymous_session_eviction_preserves_authenticated_session():
+    sessions = Sessions(web_settings())
+    oldest = sessions.create()
+    authenticated = sessions.create(authenticated=True)
+    for _ in range(254):
+        sessions.create()
+
+    sessions.create()
+
+    assert oldest.id not in sessions.entries
+    assert sessions.entries[authenticated.id] == authenticated
+
+
+def test_full_authenticated_session_store_fails_closed():
     sessions = Sessions(web_settings())
     for _ in range(256):
-        sessions.create()
+        sessions.create(authenticated=True)
     with pytest.raises(OverflowError):
         sessions.create()
+
+
+def test_expired_session_is_cleaned_before_anonymous_eviction():
+    clock = [1000.0]
+    sessions = Sessions(web_settings(), clock=lambda: clock[0])
+    expired = sessions.create()
+    clock[0] += 601
+    survivors = [sessions.create() for _ in range(255)]
+
+    replacement = sessions.create()
+
+    assert expired.id not in sessions.entries
+    assert survivors[0].id in sessions.entries
+    assert replacement.id in sessions.entries
+    assert len(sessions.entries) == 256
