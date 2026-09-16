@@ -1,6 +1,7 @@
 .env
 .env.server
 .venv/
+.ci-pip-cache/
 __pycache__/
 *.py[cod]
 .pytest_cache/

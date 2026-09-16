@@ -1,0 +1,189 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  admission:
+    name: CI / admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      # No checkout or execution of PR code on this runner.
+      - name: Check trust boundary
+        env:
+          TRUSTED: >-
+            ${{ github.actor != 'dependabot[bot]' &&
+                github.triggering_actor != 'dependabot[bot]' &&
+                ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+                 (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+                 (github.event_name == 'pull_request' &&
+                  github.event.pull_request.head.repo.full_name == github.repository &&
+                  github.event.pull_request.user.type == 'User' &&
+                  contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                           github.event.pull_request.author_association))) }}
+        run: |
+          if [ "$TRUSTED" != true ]; then
+            echo '::error::Fork, bot, or untrusted PR: review and transfer the reviewed changes to a trusted internal branch before CI.'
+            echo 'CI blocked before self-hosted scheduling. See docs/CI.md.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo 'Trusted event admitted to the repository runner.' >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: CI / verify
+    needs: admission
+    runs-on: [self-hosted, linux, x64, ci, rootless-docker, knowledge-system]
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOCKER_HOST: unix:///run/user/1000/docker.sock
+      DOCKER_CONTEXT: ''
+      BUILDX_BUILDER: default
+      PIP_DISABLE_PIP_VERSION_CHECK: '1'
+      PIP_CONFIG_FILE: /dev/null
+      PYTHONNOUSERSITE: '1'
+      OMP_NUM_THREADS: '2'
+      MKL_NUM_THREADS: '2'
+      TOKENIZERS_PARALLELISM: 'false'
+      SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          clean: true
+          # Migration tests read the actual V3.1.2 schema from Git history.
+          fetch-depth: 0
+
+      - name: Prepare isolated paths
+        id: paths
+        env:
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          work=$(mktemp -d "$RUNNER_TEMP/knowledge-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}.XXXXXX")
+          echo "CI_WORK_DIR=$work" >> "$GITHUB_ENV"
+          # Stable archive path matters: actions/cache hashes paths into its version.
+          # Checkout's clean removes any previous workspace cache before restore.
+          echo "PIP_CACHE_DIR=$GITHUB_WORKSPACE/.ci-pip-cache" >> "$GITHUB_ENV"
+          echo "CI_PROJECT=knowledge-v32-review-${REPOSITORY_ID}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "CI_IMAGE=knowledge-system-ci:${REPOSITORY_ID}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+          echo "work=$work" >> "$GITHUB_OUTPUT"
+          python3 -c 'import sys; assert sys.version_info[:2] == (3, 13); print("python=" + ".".join(map(str, sys.version_info[:3])))' >> "$GITHUB_OUTPUT"
+
+      - name: Rootless and tool preflight
+        id: preflight
+        run: bash scripts/ci.sh preflight
+
+      - name: Restore pip download cache
+        id: pip-cache
+        # Optional optimization only; installation and every required check remain strict.
+        continue-on-error: true
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci-pip-cache
+          key: pip-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.paths.outputs.python }}-${{ hashFiles('pyproject.toml') }}
+          fail-on-cache-miss: false
+
+      - name: Install into fresh virtualenv
+        id: install
+        timeout-minutes: 15
+        env:
+          CACHE_HIT: ${{ steps.pip-cache.outputs.cache-hit }}
+          CACHE_STATUS: ${{ steps.pip-cache.outcome }}
+        run: |
+          echo "pip exact cache hit: ${CACHE_HIT:-false (miss or unavailable)}"
+          if [ "$CACHE_STATUS" != success ]; then
+            echo '::warning::Optional pip cache restore failed; dependencies will be downloaded normally.'
+          fi
+          bash scripts/ci.sh install
+
+      - name: Ruff lint and format
+        id: quality
+        run: bash scripts/ci.sh quality
+
+      - name: Unit tests
+        id: unit
+        timeout-minutes: 5
+        run: bash scripts/ci.sh unit
+
+      - name: Start isolated PostgreSQL
+        id: services
+        timeout-minutes: 4
+        run: bash scripts/ci.sh services
+
+      - name: PostgreSQL integration and archive restore tests
+        id: integration
+        timeout-minutes: 8
+        run: bash scripts/ci.sh integration
+
+      - name: Build production image with persistent BuildKit cache
+        id: build
+        timeout-minutes: 20
+        run: bash scripts/ci.sh build
+
+      - name: Smoke test built image
+        id: smoke
+        timeout-minutes: 4
+        run: bash scripts/ci.sh smoke
+
+      - name: Collect test service logs before cleanup
+        if: always() && steps.services.outcome != 'skipped' && steps.paths.outputs.work != ''
+        timeout-minutes: 2
+        run: bash scripts/ci.sh logs
+
+      - name: Clean up this test stack and image
+        id: cleanup
+        if: always() && steps.paths.outputs.work != ''
+        timeout-minutes: 3
+        run: bash scripts/ci.sh cleanup
+
+      - name: Job summary
+        if: always()
+        env:
+          PREFLIGHT: ${{ steps.preflight.outcome }}
+          INSTALL: ${{ steps.install.outcome }}
+          QUALITY: ${{ steps.quality.outcome }}
+          UNIT: ${{ steps.unit.outcome }}
+          INTEGRATION: ${{ steps.integration.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          CLEANUP: ${{ steps.cleanup.outcome }}
+          CACHE_HIT: ${{ steps.pip-cache.outputs.cache-hit }}
+          CACHE_STATUS: ${{ steps.pip-cache.outcome }}
+        run: |
+          {
+            echo '| Check | Result |'
+            echo '| --- | --- |'
+            for check in PREFLIGHT INSTALL QUALITY UNIT INTEGRATION BUILD SMOKE CLEANUP; do
+              echo "| $check | ${!check} |"
+            done
+            echo
+            echo "pip cache restore: $CACHE_STATUS; exact hit: ${CACHE_HIT:-false (miss or unavailable)}."
+            echo 'BuildKit uses the rootless daemon cache; per-layer CACHED results are in build.log.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test results and diagnostics
+        if: always() && steps.paths.outputs.work != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ steps.paths.outputs.work }}/reports/
+          retention-days: 7
+          if-no-files-found: warn
+          include-hidden-files: false
+
+      # actions/cache saves only .ci-pip-cache in its post step. Runner temp cleanup
+      # removes this run's virtualenv/reports afterwards; no persistent venv reuse.

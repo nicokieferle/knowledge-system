@@ -3,6 +3,7 @@
 .env
 .env.*
 .venv
+.ci-pip-cache
 __pycache__
 *.py[cod]
 .pytest_cache
