@@ -6,19 +6,26 @@
 Läufe auf `main`. Der Hauptbranch wurde über `origin/HEAD` und die GitHub-API bestätigt.
 Concurrency bricht ältere Läufe desselben PRs/Branches ab, nicht andere PRs.
 
-`CI / admission` läuft ohne Checkout auf GitHub-hosted Ubuntu. Nur interne PRs
-von menschlichen OWNER/MEMBER/COLLABORATOR-Autoren gelangen auf den persistenten
-Runner. Forks, Bot-PRs (einschließlich Dependabot) und Dependabot-Auslöser werden
-mit einem fehlgeschlagenen Admission-Check abgewiesen, auch bei einem menschlich
-gestarteten Re-run. Kein `pull_request_target`. Ein Maintainer muss die Änderungen
-vollständig prüfen und in einen eigenen internen Branch/PR übernehmen; keine
-automatische Übernahme, kein Approval-Label als Ausführungsfreigabe. Dependabot
-schlägt wöchentlich ausschließlich Action-Updates vor.
+Die externe Sicherheitsgrenze für Forks wurde am 2026-09-17 vom Betreiber direkt in
+GitHub unter Settings → Actions → General → Fork pull request workflows bestätigt:
+**„Run workflows from fork pull requests“ ist nicht aktiviert.** Dies wurde nicht per
+API verifiziert. Fork-PR-Code wird damit nicht auf dem persistenten Runner ausgeführt.
+Ein Maintainer muss geprüfte Änderungen in einen vertrauenswürdigen internen Branch/PR
+übernehmen; es gibt keine automatische Übernahme oder Freigabe per Label.
 
-Diese Workflow-Prüfung ersetzt nicht die GitHub-Zugriffskontrolle: Workflow-Dateien
-sind selbst PR-Code. Runner-Zugriff auf dieses vertrauenswürdige Repository begrenzen,
-Fork-Workflow-Ausführung nicht automatisch freigeben und Änderungen an CI-Dateien
-vor Freigabe prüfen. Repository-/Organisationsrichtlinien wurden nicht verändert.
+`CI / admission` ist eine zusätzliche Prüfung auf GitHub-hosted Ubuntu und führt
+keinen Checkout aus. Für jeden unterstützten Trigger müssen Ereignis-Sender, `actor`
+und `triggering_actor` vorhanden, identisch und als menschlicher Benutzer erkennbar
+sein. Ein Re-run durch einen anderen Account wird deshalb abgewiesen. Bei PRs müssen
+außerdem der Kopf im selben Repository liegen, der Autor ein Mensch und seine
+Zuordnung OWNER, MEMBER oder COLLABORATOR sein. Bot-PRs und Bot-Aktualisierungen eines
+menschlich erstellten PRs werden abgewiesen. Kein `pull_request_target`.
+
+Admission ist keine unveränderbare Sicherheitsgrenze gegen Personen oder Bots mit
+Workflow-Schreibrechten: Workflow-Dateien sind selbst PR-Code und können von solchen
+Konten geändert werden. Die Prüfung ersetzt weder GitHub-Zugriffskontrolle noch die
+oben bestätigte Fork-Einstellung. Änderungen an CI-Dateien müssen weiterhin geprüft
+werden. Dependabot schlägt wöchentlich ausschließlich Action-Updates vor.
 
 `CI / verify` führt seriell aus: Preflight, frische pip-Installation, `ruff check .`,
 `ruff format --check .`, Unit-Tests, PostgreSQL-Integration einschließlich
@@ -34,8 +41,8 @@ mergefähig machen. Branch Protection wird hier nicht eingerichtet.
 ## Runner und vorhandene Projektwerkzeuge
 
 Labels: `[self-hosted, linux, x64, ci, rootless-docker, knowledge-system]`.
-**Noch zu bestätigen:** Die Runner-API lieferte bei der Einrichtung HTTP 403;
-die Runner-Labels bleiben bis zur tatsächlichen Prüfung unbestätigt.
+Die Job-Metadaten beider erfolgreichen GitHub-Läufe bestätigen genau diese sechs
+Labels sowie den Runner-Namen `ci` und die Gruppe `Default`.
 Am 2026-09-16 wurden laut Betreiber auf der CI-VM als `runner-knowledge-system`
 Python **3.13.5**, eine erfolgreiche Virtualenv-Erstellung mit `python3.13 -m venv`,
 pip **25.1.1** und GitHub-Actions-Runner **2.337.0** geprüft.
@@ -67,7 +74,8 @@ eine spätere Lockfile-/Digest-Policy wäre eine eigene Projektentscheidung.
 Python: genau ein Cache, der pip-Download-/Wheelcache über `actions/cache`.
 Er wird unter `.ci-pip-cache` wiederhergestellt; Checkout bereinigt den Workspace
 zuvor. Der Archivpfad bleibt stabil, weil er in die interne Cache-Version eingeht.
-Schlüssel: `pip-v1-<runner.os>-<runner.arch>-py<volle Python-Version>-<SHA256 pyproject.toml>`.
+Schlüssel: `pip-v1-<runner.os>-<runner.arch>-py<volle Python-Version>-<SHA256 über
+pyproject.toml und scripts/ci.sh>`.
 Keine Restore-Präfixe, keine Virtualenv-, Home-, Credential- oder `.env`-Archive.
 Eine neue Virtualenv wird in jedem Lauf erstellt; ein bestehender Pfad wird abgewiesen.
 Installation und Tests laufen unabhängig vom Cache-Hit. Miss oder Cache-Service-Ausfall
@@ -75,7 +83,8 @@ führt zum normalen Download. Nur dieser optionale Cache-Schritt hat
 `continue-on-error`; ein Restorefehler wird zusätzlich explizit als Warnung gemeldet.
 Cache-Hit/Miss erscheint im Log und in der Zusammenfassung.
 
-Invalidierung: `pyproject.toml`, Python-Version oder Schema `pip-v1` ändern.
+Invalidierung: `pyproject.toml`, die CI-Installationslogik in `scripts/ci.sh`, die
+Python-Version oder Schema `pip-v1` ändern.
 GitHub begrenzt/entfernt Cache-Einträge nach seiner Repository-Quota und
 Nutzungsdauer; alte `pip-v1-`-Einträge können in Actions → Caches gezielt gelöscht
 werden. Das ist keine Voraussetzung für einen erfolgreichen Lauf. Cache-Save erfolgt
@@ -143,10 +152,17 @@ vollständigen Umgebungsvariablen, Backups oder Secrets werden hochgeladen.
 
 Logs werden vor dem `always()`-Cleanup gesammelt. Cleanup verwendet ausschließlich
 das aktuelle Compose-Projekt, `down --volumes --remove-orphans` und dessen Image-Tag.
-Ein VM-Ausfall/kill kann auch `always()` verhindern. Nach Wiederherstellung aktive
-Läufe prüfen, den verwaisten Projektnamen über `docker compose ls --all` identifizieren,
-`CI_PROJECT`, `CI_IMAGE` und ein temporäres `CI_WORK_DIR` auf genau diesen Lauf setzen
-und `bash scripts/ci.sh logs`, danach `bash scripts/ci.sh cleanup` ausführen.
+Bei einem normalen Prüffehler sowie einer üblichen manuellen oder durch Concurrency
+ausgelösten Cancellation wertet GitHub `always()` erneut aus und gibt dem Runner Zeit
+für Cleanup. Das ist keine Garantie: Nach Ablauf des Cancellation-Fensters beendet
+GitHub Schritte zwangsweise; auch der 45-Minuten-Job-Timeout, ein erzwungener Abbruch,
+Runner-Prozess-/VM-Ausfall oder Netzwerkverlust können Cleanup und Artefakt-Post-Steps
+verhindern. Diese Pfade werden erst durch die geplanten Fehler-/Abbruchtests belegt.
+
+Nach einem solchen Ereignis aktive Läufe prüfen, den verwaisten Projektnamen über
+`docker compose ls --all` identifizieren, `CI_PROJECT`, `CI_IMAGE` und ein temporäres
+`CI_WORK_DIR` auf genau diesen Lauf setzen und `bash scripts/ci.sh logs`, danach
+`bash scripts/ci.sh cleanup` ausführen.
 Projektvolumes nur nach Kontrolle des Labels `com.docker.compose.project` entfernen.
 Verwaiste `knowledge-ci.<run>.<attempt>.*`-Tempverzeichnisse erst nach Ausschluss eines
 aktiven Laufs gezielt entfernen. Kein pauschales Löschen des Workspaces oder Home.
@@ -188,13 +204,12 @@ Arbeitsbranch-Push allein ist kein Trigger. `workflow_dispatch` ist für diese
 Erstabnahme ungeeignet: Der Workflow liegt noch nicht auf `main`, und die Admission
 erlaubt manuelle Läufe ausschließlich auf `main`. Weder Merge noch Main-Push nötig.
 
-Beide Checks müssen erfolgreich sein. Runner-Labels bleiben unbestätigt, bis die
-Registrierung eingesehen wurde oder der Job mit allen verlangten Labels tatsächlich
-zugewiesen wird. Bei `queued` zunächst Verfügbarkeit und Labels prüfen. Python/venv
-und Runner-Version sind wie oben bestätigt; Docker-Anbindung und Compose `--wait`
-werden im tatsächlichen Lauf geprüft.
-Fork-/Dependabot-PRs müssen bereits im Admission-Job scheitern und dürfen keinen
-Self-hosted-Job starten. Die Admission-Regel auch nach Action-Updates erhalten.
+Beide Checks müssen erfolgreich sein. Runner-Labels, Python/venv, Runner-Version,
+Docker-Anbindung und Compose `--wait` wurden durch die unten dokumentierte Abnahme
+bestätigt. Bei `queued` dennoch zuerst Runner-Verfügbarkeit und Labels prüfen.
+Fork-PR-Workflows bleiben extern deaktiviert. Dependabot-/Bot-PRs sowie von Bots
+ausgelöste Aktualisierungen interner PRs müssen im Admission-Job scheitern und dürfen
+keinen Self-hosted-Job starten. Die Admission-Regel auch nach Action-Updates erhalten.
 
 Im ersten Lauf Ruff, Unit-/Integrationstests (lokaler Referenzstand: 344/38, keine
 Skips), Build und Smoke kontrollieren. JUnit-Dateien sind die tatsächliche Evidenz.
@@ -249,10 +264,21 @@ der vollständige Lauf außerhalb dieser Sandbox bestand.
 
 Statisch erfolgreich: actionlint 1.7.12 (Release-Prüfsumme verifiziert), Workflow-Syntax
 und Expressions, `bash -n`, `git diff --check`, SHA-Abgleich aller drei Action-Releases.
-Kein GitHub-Workflow wurde ausgelöst oder gepusht. GitHub-pip-Cache kalt/warm,
-Artefakt-Upload, Admission-Ausführung, Runner-Labels und Docker-Prüfungen auf der echten
-Runner-VM sind erst mit der oben beschriebenen Runner-Abnahme verifizierbar.
-Die nachträgliche Betreiberbestätigung zu Python/venv und Runner-Version steht oben.
+
+GitHub-Run 35047809171 bestand am 2026-09-16 zweimal auf Commit
+`aedc8ab7bcec3fac9869263569c1521df51090ba`: Admission, frische Installation,
+Ruff, 344 Unit-Tests, 38 PostgreSQL-Integrationstests ohne Skips, Build, Smoke,
+Diagnoseartefakt, Cleanup und alle Post-Steps. Versuch 1 hatte einen pip-Cache-Miss
+und speicherte 324.283.389 Bytes; Versuch 2 hatte einen exakten Hit und verwendete
+alle sechs Dockerfile-Arbeitsschichten aus BuildKit erneut. Beide Artefakte wurden
+heruntergeladen und geprüft.
+
+Danach bestätigte der Betreiber unabhängig direkt auf der CI-VM: keine verbliebenen
+Container oder Volumes, ausschließlich Docker-Standardnetzwerke und keine laufbezogenen
+Testimages. Basisimages und 2,05 GB BuildKit-Cache blieben wie vorgesehen erhalten.
+Diese VM-Prüfung stammt aus der Betreiberbestätigung und wurde nicht über eine API
+oder diese Arbeitsumgebung wiederholt. Fehler-, Timeout- und Abbruchpfade bleiben bis
+zu den gesondert geplanten Tests ungeprüft.
 
 ## Offizielle Referenzen
 

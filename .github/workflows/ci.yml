@@ -24,8 +24,14 @@ jobs:
       - name: Check trust boundary
         env:
           TRUSTED: >-
-            ${{ github.actor != 'dependabot[bot]' &&
-                github.triggering_actor != 'dependabot[bot]' &&
+            ${{ github.actor != '' &&
+                github.triggering_actor != '' &&
+                github.event.sender.login != '' &&
+                github.event.sender.type == 'User' &&
+                github.actor == github.event.sender.login &&
+                github.triggering_actor == github.actor &&
+                !endsWith(github.actor, '[bot]') &&
+                !endsWith(github.triggering_actor, '[bot]') &&
                 ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
                  (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
                  (github.event_name == 'pull_request' &&
@@ -94,7 +100,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci-pip-cache
-          key: pip-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.paths.outputs.python }}-${{ hashFiles('pyproject.toml') }}
+          key: pip-v1-${{ runner.os }}-${{ runner.arch }}-py${{ steps.paths.outputs.python }}-${{ hashFiles('pyproject.toml', 'scripts/ci.sh') }}
           fail-on-cache-miss: false
 
       - name: Install into fresh virtualenv
