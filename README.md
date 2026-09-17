@@ -1,5 +1,7 @@
 # Knowledge System
 
+CI für Pull Requests und `main`: [Pipeline, lokale Prüfung und Wartung](docs/CI.md).
+
 ## V3.2.1: Private Browser-Review-Konsole (development)
 
 **Telegram sammelt. Der Browser prüft und entscheidet. Das Backend erzwingt
