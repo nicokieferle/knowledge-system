@@ -135,11 +135,6 @@ jobs:
         timeout-minutes: 8
         run: bash scripts/ci.sh integration
 
-      - name: Lifecycle test - deliberate failure
-        run: |
-          echo '::error::Intentional failure for cleanup-path acceptance testing.'
-          exit 42
-
       - name: Build production image with persistent BuildKit cache
         id: build
         timeout-minutes: 20
@@ -160,31 +155,6 @@ jobs:
         if: always() && steps.paths.outputs.work != ''
         timeout-minutes: 3
         run: bash scripts/ci.sh cleanup
-
-      - name: Lifecycle test - verify project resources are absent
-        if: always() && steps.paths.outputs.work != ''
-        run: |
-          status=0
-          for kind in container volume network; do
-            case "$kind" in
-              container) ids=$(docker ps -aq --filter "label=com.docker.compose.project=$CI_PROJECT") ;;
-              volume) ids=$(docker volume ls -q --filter "label=com.docker.compose.project=$CI_PROJECT") ;;
-              network) ids=$(docker network ls -q --filter "label=com.docker.compose.project=$CI_PROJECT") ;;
-            esac
-            if [ -n "$ids" ]; then
-              echo "::error::Remaining $kind resources for $CI_PROJECT: $ids"
-              status=1
-            else
-              echo "No remaining $kind resources for $CI_PROJECT."
-            fi
-          done
-          if docker image inspect "$CI_IMAGE" >/dev/null 2>&1; then
-            echo "::error::Remaining test image: $CI_IMAGE"
-            status=1
-          else
-            echo "No remaining test image: $CI_IMAGE"
-          fi
-          exit "$status"
 
       - name: Job summary
         if: always()
