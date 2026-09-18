@@ -1,5 +1,9 @@
 # V3.2 durable backup and restore hardening
 
+> Historical V3.2 result: V3.3 adds `proposal_applies` as the eleventh durable table.
+> The current scripts, fingerprint and V3.3 tests cover all eleven; counts below describe
+> the original V3.2 validation point.
+
 ## Reproduced PostgreSQL 17 behavior
 
 The durable backup is a custom-format, data-only archive of exactly these ten tables, in this

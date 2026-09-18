@@ -1,9 +1,76 @@
 # Debian 12 Docker deployment
 
+## V3.3 storage and migration gate (not deployed by this change)
+
+V3.3 must not make the application checkout writable. Set `KNOWLEDGE_DATA_ROOT` to
+the absolute host path of a separately persistent Knowledge tree; the documented
+layout is:
+
+```text
+/path/to/Knowledge-System/                         application checkout, deployable/clean
+/data/knowledgesystem/knowledge-repository/        operator-managed data checkout
+└── knowledge/                                     KNOWLEDGE_DATA_ROOT, canonical Markdown
+```
+
+The parent may be a dedicated Git checkout, but the containers receive only its
+`knowledge/` directory. The service has no `.git`, SSH key, token, commit or push
+capability. Applying a revision intentionally makes that dedicated data checkout
+dirty until an operator reviews and versions it; code deployments neither overwrite
+it nor fail because the application checkout is dirty.
+
+The image runs as UID/GID 10001. Before an authorized rollout, create/seed the data
+tree from the currently deployed canonical `knowledge/`, verify the copy byte-for-byte,
+then make the data tree and every writable parent/file owned by 10001:10001. The root
+must be a real local directory, mode `0700` or another mode without group/other write.
+Existing Markdown should be service-owned and not group/world writable. This is an
+operator migration: do not rely on Compose to create the bind source with accidental
+root ownership. Example commands must be adapted to the actual checkout and backup
+policy:
+
+```bash
+sudo install -d -m 0700 -o 10001 -g 10001 \
+  /data/knowledgesystem/knowledge-repository/knowledge
+sudo rsync -a --delete --chown=10001:10001 \
+  ./knowledge/ /data/knowledgesystem/knowledge-repository/knowledge/
+diff -qr ./knowledge /data/knowledgesystem/knowledge-repository/knowledge
+```
+
+Do not use `--delete` after the initial, explicitly verified seed: it could erase
+subsequently applied canonical changes. Put the absolute path in protected
+`.env.server` as `KNOWLEDGE_DATA_ROOT`. `knowledge-mcp` and `telegram-bot` mount it
+read-only. `review-web` alone mounts it read-write and also receives the existing
+persistent Hugging Face cache plus the exact configured embedding model/dimensions.
+Its container root remains read-only, non-root, capability-free and without a Docker
+socket.
+
+Before schema migration, stop only `review-web`, take both a durable PostgreSQL backup
+and an independent filesystem snapshot/copy of the Knowledge data tree, then run the
+new image's explicit `knowledge init-db`. The additive migration creates the eleventh
+durable table, `proposal_applies`; it never creates an apply intent, writes Markdown or
+indexes. Previously accepted proposals remain unapplied. Validate an isolated restore
+and both backups before starting `review-web`. No rollout was performed by this task.
+
+After rollout, a recoverable backup set consists of both artifacts:
+
+- the eleven-table durable PostgreSQL archive; and
+- a timestamped, access-restricted filesystem snapshot or operator-reviewed Git commit
+  of `/data/knowledgesystem/knowledge-repository`.
+
+Neither artifact alone represents the complete state. After recovery, compare each
+applied journal hash with the restored file and rebuild/retry the disposable index as
+needed. Never copy the application checkout over the data tree during an update.
+
+Apply uses local-Linux `renameat2`, file/directory `fsync` and inode semantics. NFS or
+other filesystems without equivalent guarantees are unsupported. A hard process,
+container, runner, host or power failure can interrupt the web request; the durable
+journal and apply-specific temp state make supported retries deterministic, but no
+global PostgreSQL/filesystem/index transaction or hardware-level guarantee is claimed.
+
 ## V3.2.1 private review console (separate future rollout)
 
 This change does not deploy anything. `review-web` is an independent, non-root,
-read-only-root service with a read-only knowledge mount, no model cache and no
+read-only-root service. V3.3 changes only its Knowledge bind to read-write and gives it
+the same persistent model cache required for document indexing; it still has no
 Telegram/MCP dependency. It requires configured Argon2id/session secrets and an
 explicit owner mapping; empty example secrets intentionally fail closed.
 
@@ -14,9 +81,9 @@ use a wildcard host binding. No firewall, proxy, DNS or WireGuard configuration 
 changed here. Production cookies require HTTPS. Keep loopback `127.0.0.1:8080` in
 REVIEW_ALLOWED_HOSTS for `/healthz`, which exposes only process readiness, not DB data.
 
-See [setup, secrets, owner mapping and local tests](v321-browser-review.md). No new
-schema/tables or backup-scope changes are introduced. Existing ten-table durable
-backup/restore protection remains required. V3.3 apply/index is not part of startup.
+See [setup, secrets, owner mapping and local tests](v321-browser-review.md).
+V3.2.1 itself introduced no schema/backup changes. V3.3 extends protection to eleven
+tables. Apply/index is request-driven and never part of startup.
 
 ## V3.2 durable review migration (not deployed by this change)
 
@@ -26,7 +93,7 @@ named migration replaces `proposals_status_check`, adds `accepted_review_id` and
 creates `proposal_reviews` and `proposal_decisions` without deleting existing rows.
 Repeated initialization preserves migrated data. Then take a V3.2 backup.
 
-The durable allowlist now contains ten tables. Both new tables and the accepted
+The V3.2 durable allowlist contained ten tables. Both review tables and the accepted
 revision reference are included in backup/restore/fingerprint. Review rows contain
 complete private old/new content and diffs: protect them like conversation history.
 The accepted-review FK introduces a cycle with proposals; only that foreign key is
@@ -49,8 +116,10 @@ interface. It does not provide TLS, authentication or public network access.
 ## Architecture
 
 ```text
-Debian Git checkout
-  knowledge/ (canonical Markdown, read-only bind mount)
+Debian application Git checkout (never written by the service)
+
+Dedicated persistent Knowledge tree
+  knowledge/ (canonical Markdown; review-web rw, MCP/Telegram ro)
         |
         v
 knowledge-mcp container (non-root, CPU, Streamable HTTP on 0.0.0.0:8000)
@@ -96,6 +165,9 @@ chmod 600 .env.server
 Replace the example database password in both `POSTGRES_PASSWORD` and `DATABASE_URL`.
 `openssl rand -hex 32` produces a URL-safe value. Do not commit `.env.server`; it is ignored
 by Git and excluded from the Docker build context.
+
+Also set `KNOWLEDGE_DATA_ROOT` to the pre-created absolute persistent data path from
+the V3.3 storage gate above. Compose deliberately fails interpolation when it is absent.
 
 Build the CPU image and start PostgreSQL:
 
@@ -299,7 +371,8 @@ docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-m
 
 Both commands must report identical counts and `durable_state_sha256`. The fingerprint covers
 IDs, statuses, foreign-key relationships, summary boundaries, suggestion links, client routing
-links, review revisions, decisions and hashed private fields. It never prints the private field values. Verify all ten
+links, review revisions, decisions, apply/index journal and hashed private fields. It never
+prints the private field values. Verify all eleven
 table counts, the fingerprint, a successful reconnect and the refusal of a second restore
 before considering a backup recoverable.
 
@@ -362,11 +435,14 @@ or full-document logging.
 
 ## Updating
 
-For knowledge-only changes, the read-only bind mount makes the new Markdown visible without
-rebuilding the image. Pull and reindex explicitly:
+For operator-authored Knowledge changes, work only in the dedicated data checkout, not
+the application checkout. First inspect and version or otherwise back up any browser-applied
+dirty changes. Never pull/reset over an uncommitted apply. After the operator has produced
+the intended clean data-tree revision, reindex explicitly without rebuilding the image:
 
 ```bash
-git pull --ff-only
+git -C /data/knowledgesystem/knowledge-repository status --short
+# Operator-controlled commit/fetch/fast-forward only after reviewing the status above.
 docker compose --env-file .env.server -f compose.server.yml run --rm knowledge-mcp knowledge index
 ```
 

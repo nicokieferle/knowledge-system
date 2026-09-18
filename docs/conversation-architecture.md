@@ -1,5 +1,30 @@
 # Conversation architecture
 
+## V3.3 apply boundary
+
+`review-web -> ProposalApplyService -> proposal_applies / SecureKnowledgeWriter /
+index_document` is the only write path. Accept & Apply commits the immutable accepted
+revision and the apply intent in one PostgreSQL transaction, then performs the separate
+filesystem and index phases. The journal binds proposal, accepted review, logical target,
+old/absent basis, new hash and actor. Successful apply/index states are terminal; attempts,
+safe error classes and timestamps remain durable.
+
+The three resources cannot form one global transaction. A retry before the rename sees the
+old basis; a retry after a completed rename recognizes the exact expected new hash and
+finishes idempotently. Any third state is a conflict and is preserved. Index failure leaves
+the file applied and exposes a separate retry. Document indexing deletes and inserts only
+the applied `(source_id, source_path)` inside one PostgreSQL transaction, so readers see the
+complete old or new chunk set. Apply and index use one database advisory lock namespace per
+normalized path as well as row locks.
+
+An accepted conflict is never rebound or rewritten. „Refresh review“ atomically records one
+owned successor proposal plus a control audit message, then uses the normal safe snapshot
+path to prepare its first immutable revision. The original decision/apply conflict remains
+unchanged. A double submit reuses that successor.
+
+Telegram still reaches only proposal creation and cannot decide, apply, refresh a conflict
+or retry indexing. MCP still exports only read operations.
+
 ## V3.2.1 client boundary (supersedes historical Telegram review below)
 
 `TelegramAdapter -> ConversationService -> ProposalService` collects pending proposals.
@@ -88,7 +113,8 @@ The PostgreSQL instance now contains two categories with different operational g
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Durable and backup-relevant: `conversations`, `messages`, `conversation_summaries`,
   `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
-  `client_message_bindings`, `proposal_reviews` and `proposal_decisions`.
+  `client_message_bindings`, `proposal_reviews`, `proposal_decisions` and
+  `proposal_applies`.
 
 `knowledge index` is scoped to chunk tables. `knowledge init-db` uses additive `IF NOT EXISTS`
 DDL and preserves durable rows. An index rebuild or reset must never drop, truncate or delete
@@ -100,8 +126,8 @@ once conversations exist; operations need a database backup and restore plan.
 The Telegram adapter translates updates into `ConversationService` calls and renders the
 structured `ConversationTurnResult`; it does not own history or intent state. The real LLM
 provider implements the four existing protocols. Proposal review and approval are the
-V3.2 stage; canonical file changes, Git operations and reindexing remain the separately
-guarded V3.3 stage.
+V3.2 stage. V3.3 adds the separately guarded file/index phases, but never performs Git
+commits or pushes.
 
 ## V3.2 review boundary
 
