@@ -43,6 +43,30 @@ only to validate interpolation. Integration URLs point exclusively at the loopba
 ephemeral PostgreSQL test container. Test doubles replace embeddings where the real model is
 irrelevant; the built container smoke makes no LLM or Telegram request.
 
+## GitHub acceptance
+
+The first pushed code head, `f643b475720313fd546cd82bebb0a1d0df52b337`, passed
+[GitHub Actions run 35298223594](https://github.com/Hengsto/Knowledge-System/actions/runs/35298223594).
+`CI / admission` and `CI / verify` both succeeded. GitHub reported runner `ci` with labels
+`self-hosted`, `linux`, `x64`, `ci`, `rootless-docker`, `knowledge-system`; preflight confirmed
+Python 3.13.5, the rootless daemon and the Docker Buildx `docker` driver. The job token exposed
+only `contents: read`, checkout persisted no credentials, and installation used a newly created
+virtual environment.
+
+The exact pip cache key was a hit, while dependency installation and every check still ran.
+BuildKit reused eligible base layers and loaded the resulting image for the successful smoke
+test. The two JUnit files contain 389 and 54 tests respectively, with zero failures, errors or
+skips. Project-scoped cleanup removed the run's container, volume, network and image before all
+cache/checkout post-steps succeeded. The seven-file artifact
+`ci-results-35298223594-1` contains both JUnit reports, dependency inventory, builder/build/smoke
+logs and service diagnostics; its GitHub-recorded SHA-256 is
+`873181c17e1139695657059ab50e649f3cc28439c6ab0caa76d98717ae66e438`.
+
+The service log's PostgreSQL `ERROR` records are the deliberate rollback, constraint and
+mid-restore injections asserted by successful tests, not unhandled CI failures. The only test
+warning remains the upstream Starlette deprecation; the image build also emits pip's expected
+root-user warning inside the disposable Docker build stage.
+
 ## Security and correctness evidence
 
 ### Domain, schema and durable state
