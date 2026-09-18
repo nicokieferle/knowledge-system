@@ -6,7 +6,7 @@ from typing import Any
 
 from knowledge_system.chunking import chunk_markdown_text
 from knowledge_system.config import Settings
-from knowledge_system.indexer import index_knowledge
+from knowledge_system.indexer import index_document, index_knowledge
 from knowledge_system.sources import SourceDocument
 
 
@@ -41,6 +41,11 @@ class FakeConnection:
     @contextmanager
     def transaction(self):
         yield
+
+
+class FakeEmbedder:
+    def encode(self, values):
+        return [[float(index), 1.0] for index, _ in enumerate(values)]
 
 
 def _settings() -> Settings:
@@ -94,3 +99,29 @@ def test_indexer_uses_source_adapter(monkeypatch, capsys) -> None:
         for sql, _ in fake_conn.calls
         for durable_table in durable_tables
     )
+
+
+def test_document_index_replaces_only_one_path_in_one_transaction() -> None:
+    connection = FakeConnection()
+
+    @contextmanager
+    def factory(settings):
+        yield connection
+
+    document = SourceDocument(
+        "knowledge-git",
+        "economics/test.md",
+        "# First\n\nOne.\n\n# Second\n\nTwo.",
+        {"path": "economics/test.md"},
+    )
+    count = index_document(
+        _settings(), document, embedder=FakeEmbedder(), connection_factory=factory
+    )
+
+    assert count == 2
+    assert "DELETE FROM chunks WHERE source_id=%s AND source_path=%s" in connection.calls[0][0]
+    assert connection.calls[0][1] == ("knowledge-git", "economics/test.md")
+    inserts = [call for call in connection.calls if "INSERT INTO chunks" in call[0]]
+    assert len(inserts) == 2
+    assert {call[1][4] for call in inserts} == {0, 1}
+    assert all(call[1][2] == "economics/test.md" for call in inserts)

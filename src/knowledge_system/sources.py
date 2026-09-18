@@ -11,6 +11,37 @@ ROOT_MARKDOWN_EXCLUDES = {"README.md"}
 DEFAULT_GIT_SOURCE_ID = "knowledge-git"
 
 
+def validate_source_target(source_id: str, source_path: str) -> list[str]:
+    """Validate the portable review/apply namespace and return its components."""
+    from .proposal_review import InvalidTarget
+
+    if source_id != DEFAULT_GIT_SOURCE_ID:
+        raise InvalidTarget()
+    if not isinstance(source_path, str) or not source_path or len(source_path) > 240:
+        raise InvalidTarget()
+    parts = source_path.split("/")
+    if (
+        source_path.casefold() in {name.casefold() for name in ROOT_MARKDOWN_EXCLUDES}
+        or not source_path.endswith(".md")
+        or any(
+            not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", part)
+            or part.endswith((".", " "))
+            or part.split(".")[0].upper()
+            in {
+                "CON",
+                "PRN",
+                "AUX",
+                "NUL",
+                *(f"COM{i}" for i in range(10)),
+                *(f"LPT{i}" for i in range(10)),
+            }
+            for part in parts
+        )
+    ):
+        raise InvalidTarget()
+    return parts
+
+
 def _stable_file_metadata(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
     """Return change-sensitive identity metadata while deliberately excluding atime."""
 
@@ -116,30 +147,9 @@ class GitMarkdownSource:
         """
         from .proposal_review import MAX_REVIEW_BYTES, InvalidTarget
 
-        if source_id != DEFAULT_GIT_SOURCE_ID or self.source_id != DEFAULT_GIT_SOURCE_ID:
+        if self.source_id != DEFAULT_GIT_SOURCE_ID:
             raise InvalidTarget()
-        if not isinstance(source_path, str) or not source_path or len(source_path) > 240:
-            raise InvalidTarget()
-        parts = source_path.split("/")
-        if (
-            source_path.casefold() in {name.casefold() for name in ROOT_MARKDOWN_EXCLUDES}
-            or not source_path.endswith(".md")
-            or any(
-                not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_. -]*", p)
-                or p.endswith((".", " "))
-                or p.split(".")[0].upper()
-                in {
-                    "CON",
-                    "PRN",
-                    "AUX",
-                    "NUL",
-                    *(f"COM{i}" for i in range(10)),
-                    *(f"LPT{i}" for i in range(10)),
-                }
-                for p in parts
-            )
-        ):
-            raise InvalidTarget()
+        parts = validate_source_target(source_id, source_path)
         try:
             root = self.root.resolve(strict=True)
             if os.name == "posix":

@@ -5,9 +5,60 @@ from pgvector import Vector
 from .chunking import Chunk, chunk_markdown_text
 from .config import Settings
 from .db import connect
-from .sources import GitMarkdownSource, SourceAdapter
+from .sources import GitMarkdownSource, SourceAdapter, SourceDocument
 
 ExistingChunkState = tuple[str, str]
+
+
+def index_document(
+    settings: Settings,
+    document: SourceDocument,
+    *,
+    embedder=None,
+    connection_factory=connect,
+) -> int:
+    """Atomically replace one applied document's chunks; safe to repeat."""
+    chunks = chunk_markdown_text(document.content, document.source_path)
+    if embedder is None and chunks:
+        from .embedder import LocalEmbedder
+
+        embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
+    vectors = embedder.encode([chunk.content for chunk in chunks]) if chunks else []
+    if len(vectors) != len(chunks):
+        raise RuntimeError("Embedding result count mismatch")
+    with connection_factory(settings) as conn, conn.transaction():
+        # Delete and insert share one PostgreSQL transaction: readers observe the
+        # complete old document or the complete new document, never a mixture.
+        conn.execute(
+            "DELETE FROM chunks WHERE source_id=%s AND source_path=%s",
+            (document.source_id, document.source_path),
+        )
+        for chunk, vector in zip(chunks, vectors, strict=True):
+            conn.execute(
+                """INSERT INTO chunks
+                (chunk_key, source_id, source_path, heading_path, ordinal, content,
+                 content_hash, embedding_model, embedding, indexed_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,now())""",
+                (
+                    chunk.chunk_key,
+                    document.source_id,
+                    chunk.source_path,
+                    chunk.heading_path,
+                    chunk.ordinal,
+                    chunk.content,
+                    chunk.content_hash,
+                    settings.embedding_model,
+                    Vector(vector),
+                ),
+            )
+        conn.execute(
+            """INSERT INTO index_metadata (key, value)
+            VALUES ('embedding_model', %s)
+            ON CONFLICT (key) DO UPDATE
+            SET value=EXCLUDED.value, updated_at=now()""",
+            (settings.embedding_model,),
+        )
+    return len(chunks)
 
 
 def _load_existing_chunk_state(

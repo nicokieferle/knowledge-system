@@ -12,6 +12,7 @@ readonly DURABLE_TABLES=(
   proposals
   proposal_reviews
   proposal_decisions
+  proposal_applies
 )
 
 configure_compose_command() {
@@ -192,5 +193,20 @@ durable_integrity_expression() {
    LEFT JOIN public.proposals p ON p.id = d.proposal_id
    LEFT JOIN public.proposal_reviews r ON r.id = d.review_id AND r.proposal_id = d.proposal_id
    WHERE p.id IS NULL OR (d.review_id IS NOT NULL AND r.id IS NULL))
+  +
+  (SELECT count(*) FROM public.proposal_applies a
+   LEFT JOIN public.proposals p ON p.id = a.proposal_id
+   LEFT JOIN public.proposal_reviews r
+     ON r.id = a.review_id AND r.proposal_id = a.proposal_id
+   LEFT JOIN public.proposals refresh ON refresh.id = a.refresh_proposal_id
+   WHERE p.id IS NULL OR r.id IS NULL OR p.status != 'accepted'
+      OR p.accepted_review_id IS DISTINCT FROM a.review_id
+      OR a.target_source_id IS DISTINCT FROM r.target_source_id
+      OR a.target_source_path IS DISTINCT FROM r.target_source_path
+      OR a.expected_old_hash IS DISTINCT FROM r.old_hash
+      OR a.expected_new_hash IS DISTINCT FROM r.new_hash
+      OR a.expected_absent IS DISTINCT FROM (r.change_kind = 'create')
+      OR (a.refresh_proposal_id IS NOT NULL
+          AND (refresh.id IS NULL OR refresh.conversation_id IS DISTINCT FROM p.conversation_id)))
 SQL
 }

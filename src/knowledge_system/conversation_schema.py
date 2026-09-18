@@ -155,3 +155,7 @@ def init_conversation_schema(conn: SchemaConnection) -> None:
     from .review_schema import REVIEW_SCHEMA
 
     conn.execute(REVIEW_SCHEMA)
+
+    from .apply_schema import APPLY_SCHEMA
+
+    conn.execute(APPLY_SCHEMA)
