@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
@@ -83,6 +84,27 @@ def get_settings() -> Settings:
         ),
         embedding_dimensions=int(os.getenv("EMBEDDING_DIMENSIONS", "384")),
     )
+
+
+def validate_apply_knowledge_root(path: Path, *, production: bool) -> None:
+    """Fail closed before enabling browser writes to the configured data root."""
+    try:
+        raw = path.absolute()
+        info = os.lstat(raw)
+        resolved = raw.resolve(strict=True)
+    except OSError:
+        raise ValueError("KNOWLEDGE_ROOT must be an existing directory") from None
+    if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or resolved != raw:
+        raise ValueError("KNOWLEDGE_ROOT must be a real directory, not an alias")
+    if not os.access(resolved, os.R_OK | os.W_OK | os.X_OK):
+        raise ValueError("KNOWLEDGE_ROOT must be readable and writable by the review service")
+    if production:
+        if resolved == Path("/app") or Path("/app") in resolved.parents:
+            raise ValueError("Production KNOWLEDGE_ROOT must be outside the application image")
+        if info.st_uid != os.geteuid():
+            raise ValueError("Production KNOWLEDGE_ROOT must be owned by the service UID")
+        if stat.S_IMODE(info.st_mode) & 0o022:
+            raise ValueError("Production KNOWLEDGE_ROOT must not be group/world writable")
 
 
 def get_mcp_server_settings() -> MCPServerSettings:

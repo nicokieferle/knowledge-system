@@ -1,8 +1,9 @@
 {% extends "base.html" %}
 {% block content %}<h1>Entscheidung bestätigen</h1>
 <p>Revision {{ view.revision.number }} von <span class="path">{{ view.revision.content.target_source_path }}</span></p>
-<p>Die Entscheidung „{{ label }}“ ist endgültig. Sie schreibt keine Knowledge-Datei.</p>
-<form method="post" action="/reviews/{{ view.proposal.id }}/{{ action }}">
+{% if action == 'accept-apply' %}<p>Die konkrete Revision wird akzeptiert, auf exakt passender Basis atomar angewendet und anschließend dokumentbezogen indexiert.</p>
+{% else %}<p>Die Entscheidung „{{ label }}“ ist endgültig und schreibt keine Knowledge-Datei.</p>{% endif %}
+<form method="post" action="/reviews/{{ view.proposal.id }}/decision/{{ action }}">
 <input type="hidden" name="csrf" value="{{ session.csrf }}"><input type="hidden" name="review_id" value="{{ view.revision.id }}"><input type="hidden" name="status" value="{{ expected }}"><input type="hidden" name="confirmed" value="yes">
 <button class="{{ action }}">{{ label }} endgültig bestätigen</button></form>
 <a class="button" href="/reviews/{{ view.proposal.id }}">Abbrechen und zurück zum Review</a>

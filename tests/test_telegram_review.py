@@ -10,7 +10,19 @@ from tests.test_telegram_adapter import adapter_for
 
 
 @pytest.mark.parametrize(
-    "action", ["rv:a", "rv:r", "rv:d", "rv:refresh", "pv:r", "pv:d", "pv:refresh"]
+    "action",
+    [
+        "rv:a",
+        "rv:r",
+        "rv:d",
+        "rv:refresh",
+        "rv:apply",
+        "rv:index",
+        "pv:r",
+        "pv:d",
+        "pv:refresh",
+        "pv:apply",
+    ],
 )
 def test_legacy_callbacks_never_reach_any_domain_service(action):
     adapter, _, _, _, transport, _, _, _ = adapter_for()

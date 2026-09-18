@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .proposal_apply import ApplyStatus, IndexStatus, ProposalApplyService
 from .proposal_review import (
     InvalidTarget,
     InvalidTransition,
@@ -39,6 +40,29 @@ STATUS_LABELS = {
     "accepted": "Akzeptiert",
     "rejected": "Abgelehnt",
 }
+APPLY_ERROR_LABELS = {
+    "basis_changed": "Die Dateibasis hat sich geändert (basis_changed).",
+    "basis_hash_changed": "Der Hash der Dateibasis stimmt nicht (basis_hash_changed).",
+    "target_changed": "Das Ziel wurde gleichzeitig geändert (target_changed).",
+    "case_collision": "Ein gleichnamiger Pfad mit anderer Großschreibung kollidiert (case_collision).",
+    "unsafe_permissions": "Eigentümer oder Schreibrechte des Pfads sind nicht sicher (unsafe_permissions).",
+    "parent_changed": "Ein übergeordnetes Verzeichnis wurde geändert (parent_changed).",
+    "target_invalid": "Das Ziel ist kein sicher lesbares reguläres Dokument (target_invalid).",
+    "root_invalid": "Der Knowledge-Root ist nicht sicher erreichbar (root_invalid).",
+    "root_changed": "Der Knowledge-Root wurde gleichzeitig ausgetauscht (root_changed).",
+    "root_unavailable": "Der Knowledge-Root ist nicht verfügbar (root_unavailable).",
+    "review_hash_invalid": "Die gebundene Revision ist inkonsistent (review_hash_invalid).",
+    "exchange_detected_third_state": "Ein konkurrierender Drittstand wurde erhalten (exchange_detected_third_state).",
+    "recovered_third_state": "Ein Drittstand wurde beim Recovery erhalten (recovered_third_state).",
+    "ambiguous_recovery": "Der Wiederherstellungszustand ist uneindeutig (ambiguous_recovery).",
+    "filesystem_error": "Der Dateisystemvorgang ist fehlgeschlagen (filesystem_error).",
+    "renameat2_unavailable": "Die sichere Linux-Rename-Funktion fehlt (renameat2_unavailable).",
+    "verification_failed": "Die Nachprüfung des Schreibvorgangs ist fehlgeschlagen (verification_failed).",
+}
+INDEX_ERROR_LABELS = {
+    "applied_source_changed": "Die angewandte Datei wurde vor der Indexierung geändert (applied_source_changed).",
+    "index_operation_failed": "Die dokumentbezogene Indexierung ist fehlgeschlagen (index_operation_failed).",
+}
 ERRORS = {
     ProposalNotFound: (404, "Vorschlag nicht gefunden."),
     ReviewForbidden: (404, "Vorschlag nicht gefunden."),
@@ -51,7 +75,13 @@ ERRORS = {
 }
 
 
-def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> FastAPI:
+def create_app(
+    settings: ReviewWebSettings,
+    service: ProposalReviewService,
+    apply_service: ProposalApplyService | None = None,
+) -> FastAPI:
+    if settings.secure and apply_service is None:
+        raise ValueError("Production review requires the V3.3 apply service")
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     sessions = Sessions(settings)
     app.state.sessions = sessions
@@ -252,9 +282,11 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
     @app.get("/reviews/{proposal_id}", response_class=HTMLResponse)
     def detail(request: Request, proposal_id: str):
         view = service.get(settings.owner, UUID(proposal_id))
+        application = apply_service.get(settings.owner, view.proposal.id) if apply_service else None
         context = service.context(settings.owner, view.proposal.id)
+        mutable = view.proposal.status in ("pending", "deferred")
         stale = False
-        if view.revision:
+        if view.revision and mutable:
             try:
                 service.check_basis(view.revision)
             except (StaleReview, InvalidTarget):
@@ -265,7 +297,12 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
             view=view,
             context=context,
             stale=stale,
-            mutable=view.proposal.status in ("pending", "deferred"),
+            mutable=mutable,
+            application=application.apply if application else None,
+            apply_status=ApplyStatus,
+            index_status=IndexStatus,
+            apply_error_labels=APPLY_ERROR_LABELS,
+            index_error_labels=INDEX_ERROR_LABELS,
         )
 
     @app.post("/reviews/{proposal_id}/refresh")
@@ -295,14 +332,13 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
         )
         return RedirectResponse(f"/reviews/{pid}", 303)
 
-    @app.post("/reviews/{proposal_id}/{action}")
+    @app.post("/reviews/{proposal_id}/decision/{action}")
     def decide(request: Request, proposal_id: str, action: str):
         actions = {
-            "accept": ProposalStatus.ACCEPTED,
             "reject": ProposalStatus.REJECTED,
             "defer": ProposalStatus.DEFERRED,
         }
-        if action not in actions:
+        if action not in (*actions, "accept-apply"):
             return error(request, 404, "Seite nicht gefunden.")
         form = request.state.form
         pid, rid = UUID(proposal_id), UUID(form.get("review_id", ""))
@@ -312,7 +348,7 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
         view = service.get(settings.owner, pid)
         if not view.revision or view.revision.id != rid:
             raise ReviewConflict()
-        if action in ("accept", "reject") and form.get("confirmed") != "yes":
+        if action in ("accept-apply", "reject") and form.get("confirmed") != "yes":
             # Explicit confirmation works without JavaScript; retain the original
             # revision/status, never silently substitute a newer review on POST.
             return render(
@@ -321,10 +357,71 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
                 view=view,
                 action=action,
                 expected=expected,
-                label=STATUS_LABELS[actions[action].value],
+                label="Accept & Apply"
+                if action == "accept-apply"
+                else STATUS_LABELS[actions[action].value],
             )
-        service.decide(settings.owner, pid, rid, actions[action], expected_status=expected)
+        if action == "accept-apply":
+            if apply_service is None:
+                raise RuntimeError("Apply service is unavailable")
+            apply_service.accept_and_apply(settings.owner, pid, rid, expected)
+        else:
+            service.decide(settings.owner, pid, rid, actions[action], expected_status=expected)
         return RedirectResponse(f"/reviews/{pid}", 303)
+
+    @app.post("/reviews/{proposal_id}/apply")
+    def apply_accepted(request: Request, proposal_id: str):
+        if apply_service is None:
+            raise RuntimeError("Apply service is unavailable")
+        form = request.state.form
+        pid = UUID(proposal_id)
+        view = service.get(settings.owner, pid)
+        rid = UUID(form.get("review_id", ""))
+        if view.proposal.status != "accepted" or view.accepted_review_id != rid:
+            raise ReviewConflict()
+        apply_service.apply_accepted(settings.owner, pid, rid)
+        return RedirectResponse(f"/reviews/{pid}", 303)
+
+    @app.post("/reviews/{proposal_id}/retry-apply")
+    def retry_apply(request: Request, proposal_id: str):
+        if apply_service is None:
+            raise RuntimeError("Apply service is unavailable")
+        pid = UUID(proposal_id)
+        current = apply_service.get(settings.owner, pid)
+        if current.apply is None or current.apply.apply_status not in (
+            "pending",
+            "conflict",
+            "failed",
+        ):
+            raise InvalidTransition()
+        apply_service.retry_apply(settings.owner, pid)
+        return RedirectResponse(f"/reviews/{pid}", 303)
+
+    @app.post("/reviews/{proposal_id}/retry-index")
+    def retry_index(request: Request, proposal_id: str):
+        if apply_service is None:
+            raise RuntimeError("Apply service is unavailable")
+        pid = UUID(proposal_id)
+        current = apply_service.get(settings.owner, pid)
+        if (
+            current.apply is None
+            or current.apply.apply_status != "applied"
+            or current.apply.index_status != "failed"
+        ):
+            raise InvalidTransition()
+        apply_service.retry_index(settings.owner, pid)
+        return RedirectResponse(f"/reviews/{pid}", 303)
+
+    @app.post("/reviews/{proposal_id}/refresh-review")
+    def refresh_conflict_review(request: Request, proposal_id: str):
+        if apply_service is None:
+            raise RuntimeError("Apply service is unavailable")
+        pid = UUID(proposal_id)
+        current = apply_service.get(settings.owner, pid)
+        if current.apply is None or current.apply.apply_status != "conflict":
+            raise InvalidTransition()
+        refreshed = apply_service.refresh_review(settings.owner, pid)
+        return RedirectResponse(f"/reviews/{refreshed.proposal.id}", 303)
 
     app.mount("/static", StaticFiles(directory=ASSETS / "static"), name="static")
     return app
@@ -333,7 +430,9 @@ def create_app(settings: ReviewWebSettings, service: ProposalReviewService) -> F
 def main():
     import uvicorn
 
-    from .config import get_settings
+    from .config import get_settings, validate_apply_knowledge_root
+    from .knowledge_apply import SecureKnowledgeWriter
+    from .proposal_apply import ProposalApplyService
     from .review_store import PostgresReviewStore
     from .sources import GitMarkdownSource
 
@@ -341,8 +440,17 @@ def main():
     # Web config is validated first and never silently loads a development .env.
     web = ReviewWebSettings.from_environment()
     db = get_settings()
+    validate_apply_knowledge_root(
+        Path(os.getenv("KNOWLEDGE_ROOT", "./knowledge")), production=web.secure
+    )
+    reviews = PostgresReviewStore(db)
     app = create_app(
-        web, ProposalReviewService(PostgresReviewStore(db), GitMarkdownSource(db.knowledge_root))
+        web,
+        ProposalReviewService(reviews, GitMarkdownSource(db.knowledge_root)),
+        ProposalApplyService(
+            db,
+            writer=SecureKnowledgeWriter(db.knowledge_root, require_private_permissions=web.secure),
+        ),
     )
     uvicorn.run(
         app,

@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+from knowledge_system.config import validate_apply_knowledge_root
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -14,6 +18,8 @@ def test_review_service_is_private_and_separate():
     assert "read_only: true" in review and "cap_drop: [ALL]" in review
     assert "docker.sock" not in review and "privileged:" not in review
     assert "TELEGRAM_BOT_TOKEN" not in review and "LLM_API_KEY" not in review
+    assert "EMBEDDING_MODEL:" in review and "EMBEDDING_DIMENSIONS:" in review
+    assert "target: /home/knowledge/.cache/huggingface" in review
 
 
 def test_server_compose_preserves_local_only_and_persistent_boundaries() -> None:
@@ -23,8 +29,9 @@ def test_server_compose_preserves_local_only_and_persistent_boundaries() -> None
     assert "MCP_HOST: 0.0.0.0" in compose
     assert "MCP_ALLOWED_HOSTS:" in compose
     assert "condition: service_healthy" in compose
-    assert "source: ./knowledge" in compose
-    assert "target: /app/knowledge" in compose
+    assert "source: ${KNOWLEDGE_DATA_ROOT:?Set the persistent Knowledge data root}" in compose
+    assert "target: /knowledge-data" in compose
+    assert compose.count("read_only: false") == 1
     assert "read_only: true" in compose
     assert "/data/knowledgesystem/postgres:/var/lib/postgresql/data" in compose
     assert "source: /data/knowledgesystem/huggingface" in compose
@@ -62,3 +69,17 @@ def test_debian_documentation_has_durable_backup_and_defensive_restore_commands(
     assert "client_message_bindings" in deployment
     assert "Do not use `docker compose ... down -v`" in deployment
     assert "/data/knowledgesystem/backups" in deployment
+
+
+def test_apply_root_validation_rejects_alias_and_unsafe_permissions(tmp_path) -> None:
+    root = tmp_path / "knowledge"
+    root.mkdir(mode=0o700)
+    validate_apply_knowledge_root(root, production=True)
+    root.chmod(0o770)
+    with pytest.raises(ValueError, match="group/world"):
+        validate_apply_knowledge_root(root, production=True)
+    root.chmod(0o700)
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    with pytest.raises(ValueError, match="real directory"):
+        validate_apply_knowledge_root(alias, production=True)
