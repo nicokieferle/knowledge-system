@@ -158,6 +158,8 @@ apply, and an apply waits while standalone embedding holds the document lock.
 Every call must provide the typed coordination state, and every injected callback must accept
 that keyword. Validation checks the actual outer signature without following `__wrapped__`;
 functions, forwarding wrappers, partials, bound methods and callable objects are supported.
+Normal partials retain their bound-argument signature; if a partial subclass overrides
+`__call__`, validation instead checks that actually bound outer method.
 The service captures and validates the callback again before acceptance/intent or retry mutation,
 so an incompatible replaced dependency cannot change attempts, files or journal status.
 `LOCKS_HELD` callbacks do not reacquire locks on their index connection. Callbacks are trusted
@@ -175,8 +177,9 @@ injected code indexed correctly; callbacks remain trusted implementations of tha
 Unexpected deferred/unknown results store `index_callback_contract` and leave the durable file
 `applied` but the index `failed`, never `indexed`. A corrected synchronous callback can then retry
 and atomically replace the chunks, including when the faulty callback already committed them.
-Native never-started coroutines/generators are closed without entering their bodies; an unstarted
-async generator is closed using its native close operation, without an event loop. Suspended
+Exact native never-started coroutines/generators are closed without entering their bodies; an
+exact native unstarted async generator is closed using its native close operation, without an
+event loop. Objects that only proxy a native type never receive a foreign cleanup call. Suspended
 objects or async generators without safe state inspection (Python 3.11) retain caller ownership.
 Arbitrary awaitables/futures are not driven, cancelled or closed via foreign methods:
 doing so could execute callback/finally logic. Their existing owner remains responsible for their

@@ -297,9 +297,10 @@ class SecureKnowledgeWriter:
             if self._durability_identity(os.fstat(fd)) != identity:
                 raise KnowledgeConflict("target_changed")
 
-            # The directory metadata guard also detects an ABA rename away and
-            # back around the parent fsync. The target descriptor remains open
-            # until all post-fsync identity and byte checks have completed.
+            # The directory metadata guard conservatively detects observable
+            # namespace changes around the parent fsync; it is not a universal
+            # ABA event counter. The target descriptor remains open until all
+            # post-fsync identity and byte checks have completed.
             directory_identity = self._durability_identity(os.fstat(directory))
             os.fsync(directory)
             self.fault("after_directory_fsync")

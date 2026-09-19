@@ -7,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial, wraps
 from pathlib import Path
+from types import AsyncGeneratorType, CoroutineType, GeneratorType
 from typing import Any
 
 import pytest
@@ -221,6 +222,123 @@ def test_falsey_incompatible_callback_cannot_silently_select_the_default():
 
     with pytest.raises(TypeError, match="keyword-only coordination"):
         ProposalApplyService(_settings(), document_indexer=Indexer())
+
+
+def test_partial_subclass_override_uses_its_actual_bound_signature():
+    def backing(document, *, coordination):
+        return 1
+
+    class Incompatible(partial):
+        def __call__(self, document):
+            raise AssertionError("signature validation must precede execution")
+
+    class Compatible(partial):
+        def __call__(self, document, *, coordination):
+            return self.func(document, coordination=coordination)
+
+    class PositionalOrKeyword(partial):
+        def __call__(self, document, coordination):
+            return self.func(document, coordination=coordination)
+
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        validate_document_indexer(Incompatible(backing))
+    validate_document_indexer(Compatible(backing))
+    validate_document_indexer(PositionalOrKeyword(backing))
+
+
+def test_partial_and_inherited_partial_subclass_keep_partial_binding_rules():
+    def callback(prefix, document, *, coordination):
+        return prefix, document, coordination
+
+    class Inherited(partial):
+        pass
+
+    exact = partial(callback, "exact")
+    inherited = Inherited(callback, "inherited")
+    nested = partial(partial(callback, "nested"))
+    wrapped = wraps(callback)(partial(callback, "wrapped"))
+    for index in (exact, inherited, nested, wrapped):
+        validate_document_indexer(index)
+        assert index(object(), coordination=DocumentIndexCoordination.LOCKS_HELD)[2] == "locks_held"
+
+
+def test_partial_of_bound_method_and_falsey_compatible_override_are_supported():
+    class Indexer:
+        def run(self, prefix, document, *, coordination):
+            return prefix, coordination
+
+    class Falsey(partial):
+        def __bool__(self):
+            return False
+
+        def __call__(self, document, *, coordination):
+            return partial.__call__(self, document, coordination=coordination)
+
+    bound = partial(Indexer().run, "bound")
+    falsey = Falsey(bound)
+    validate_document_indexer(bound)
+    validate_document_indexer(falsey)
+    assert falsey(object(), coordination=DocumentIndexCoordination.LOCKS_HELD) == (
+        "bound",
+        "locks_held",
+    )
+
+
+def test_partial_subclass_checks_override_and_backing_execution_modes():
+    async def async_backing(document, *, coordination):
+        raise AssertionError("must never execute")
+
+    def sync_backing(document, *, coordination):
+        return None
+
+    class SyncOverride(partial):
+        def __call__(self, document, *, coordination):
+            return self.func(document, coordination=coordination)
+
+    class AsyncOverride(partial):
+        async def __call__(self, document, *, coordination):
+            raise AssertionError("must never execute")
+
+    for index in (SyncOverride(async_backing), AsyncOverride(sync_backing)):
+        with pytest.raises(TypeError, match="document_indexer must be synchronous"):
+            validate_document_indexer(index)
+
+
+def test_callback_introspection_graph_is_identity_cycle_safe():
+    def first(document, *, coordination):
+        return None
+
+    def second(document, *, coordination):
+        return None
+
+    first.__wrapped__ = second
+    second.__wrapped__ = first
+    validate_document_indexer(first)
+
+
+@pytest.mark.parametrize(
+    ("native_type", "method"),
+    [
+        (CoroutineType, "close"),
+        (GeneratorType, "close"),
+        (AsyncGeneratorType, "aclose"),
+    ],
+)
+def test_deferred_type_proxies_never_dispatch_foreign_cleanup(native_type, method):
+    called = []
+
+    class Proxy:
+        __class__ = native_type
+
+        def close(self):
+            called.append("close")
+
+        def aclose(self):
+            called.append("aclose")
+
+    with pytest.raises(TypeError, match="after synchronous completion"):
+        validate_document_index_result(Proxy())
+    assert called == [], method
 
 
 DEFERRED_KINDS = ("coroutine", "generator", "async_generator")

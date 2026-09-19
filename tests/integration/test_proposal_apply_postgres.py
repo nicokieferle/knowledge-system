@@ -453,6 +453,77 @@ def test_deferred_callback_rejected_before_any_mutation(database, kind, form, op
             assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("kind", ["signature", "asynchronous"])
+@pytest.mark.parametrize("operation", ["accept", "apply_accepted", "retry_apply", "retry_index"])
+def test_partial_subclass_override_is_rejected_before_any_mutation(database, kind, operation):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    if operation != "accept":
+        service.store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    if operation == "retry_index":
+        service.store.execute_apply(who, proposal.id, service.writer)
+    before = service.get(who, proposal.id)
+    target = database.knowledge_root / "new.md"
+    before_bytes = target.read_bytes() if target.exists() else None
+
+    if kind == "signature":
+
+        class IncompatiblePartial(partial):
+            def __call__(self, document):
+                raise AssertionError("must fail before execution")
+
+        callback = IncompatiblePartial(document_indexer(database))
+        message = "keyword-only coordination"
+    else:
+
+        class IncompatiblePartial(partial):
+            async def __call__(self, document, *, coordination):
+                raise AssertionError("must fail before execution")
+
+        callback = IncompatiblePartial(document_indexer(database))
+        message = "must be synchronous"
+
+    service.document_indexer = callback
+    with pytest.raises(TypeError, match=message):
+        if operation == "accept":
+            service.accept_and_apply(who, proposal.id, revision.id, "pending")
+        elif operation == "apply_accepted":
+            service.apply_accepted(who, proposal.id, revision.id)
+        else:
+            getattr(service, operation)(who, proposal.id)
+    assert service.get(who, proposal.id) == before
+    assert (target.read_bytes() if target.exists() else None) == before_bytes
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
+        if operation == "accept":
+            assert conn.execute("SELECT count(*) FROM proposal_applies").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 0
+
+
+def test_compatible_partial_subclass_override_commits_the_real_index(database):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    real_index = document_indexer(database)
+
+    class CompatiblePartial(partial):
+        def __call__(self, document, *, coordination):
+            return real_index(document, coordination=coordination)
+
+    # The obsolete backing signature proves validation follows the overridden
+    # bound __call__ rather than partial.func for this subclass.
+    callback = CompatiblePartial(lambda document: None)
+    service = ProposalApplyService(database, document_indexer=callback)
+    result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    assert result.apply.apply_status == "applied"
+    assert result.apply.index_status == "indexed"
+    assert result.apply.apply_attempts == result.apply.index_attempts == 1
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT content FROM chunks").fetchall() == [("(document)\n\nnew",)]
+
+
 @pytest.mark.parametrize("kind", (*DEFERRED_KINDS, "awaitable", "future"))
 @pytest.mark.parametrize("committed_first", [False, True])
 def test_deferred_result_fails_index_and_real_retry_recovers(

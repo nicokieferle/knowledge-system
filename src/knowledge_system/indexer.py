@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 from enum import StrEnum
 from functools import partial
+from types import AsyncGeneratorType, CoroutineType, GeneratorType
 from typing import Protocol
 
 from pgvector import Vector
@@ -42,10 +43,24 @@ class DocumentIndexer(Protocol):
 def validate_document_indexer(index: object) -> None:
     """Reject the obsolete one-argument callback contract before any apply work."""
 
+    signature_target = index
+    if isinstance(index, partial):
+        call_descriptor = next(
+            cls.__dict__["__call__"] for cls in type(index).__mro__ if "__call__" in cls.__dict__
+        )
+        # inspect.signature(partial_instance) normally describes partial.func
+        # plus its bound arguments. A subclass can replace __call__, in which
+        # case that bound method is the interface Python will actually invoke.
+        if call_descriptor is not partial.__call__:
+            signature_target = (
+                call_descriptor.__get__(index, type(index))
+                if hasattr(call_descriptor, "__get__")
+                else call_descriptor
+            )
     try:
         # __wrapped__ describes the decorated function, not necessarily the
         # actual outer callable. Check the interface we will really invoke.
-        inspect.signature(index, follow_wrapped=False).bind(
+        inspect.signature(signature_target, follow_wrapped=False).bind(
             object(), coordination=DocumentIndexCoordination.LOCKS_HELD
         )
     except (TypeError, ValueError):
@@ -94,14 +109,15 @@ def validate_document_index_result(result: object) -> None:
     """
     if result is None or (type(result) is int and result >= 0):
         return
-    if (
-        inspect.iscoroutine(result)
+    unstarted_native = (
+        type(result) is CoroutineType
         and inspect.getcoroutinestate(result) == inspect.CORO_CREATED
-        or inspect.isgenerator(result)
+        or type(result) is GeneratorType
         and inspect.getgeneratorstate(result) == inspect.GEN_CREATED
-    ):
+    )
+    if unstarted_native:
         result.close()
-    elif inspect.isasyncgen(result):
+    elif type(result) is AsyncGeneratorType:
         # Python 3.11 lacks safe async-generator state inspection. In that case
         # leave lifecycle ownership with the caller rather than guessing from
         # interpreter-specific frame offsets and potentially entering user code.
