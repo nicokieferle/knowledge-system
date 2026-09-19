@@ -17,7 +17,7 @@ independent filesystem backup remain operator prerequisites and were not execute
 ## Local environment and commands
 
 The final local gate used Python 3.13, rootless Docker, PostgreSQL 17.11 and pgvector 0.8.6.
-It completed 398 unit/HTTP tests and 71 real PostgreSQL integration tests, with no failures
+It completed 415 unit/HTTP tests and 107 real PostgreSQL integration tests, with no failures
 or skips in either separately executed group. The only warning was the upstream Starlette
 `BlockingPortal` deprecation noted below. The final rootless BuildKit image build and the
 built-image database smoke test also succeeded; the smoke test reported
@@ -79,6 +79,11 @@ validation artifacts; each pushed head is additionally accepted by the repositor
 The follow-up review's replacement-inode race, injected-indexer self-block and confirmed 32-bit
 document-lock collision were likewise reproduced against `dba1660249181e3a2a71456f30b10e955ee12ee9`
 before the descriptor binding, explicit coordination contract and 64-bit lock-domain changes.
+The second follow-up's initial-apply inode exchange, stale standalone snapshot and decorated
+callback bypass were independently reproduced against `f3f267413493efb5abf38dddc17c303de6170c87`.
+Initial apply and retry now share one descriptor-bound durability check. Standalone indexing
+discards cached bytes and snapshots under locks held through commit. Callback validation checks
+the outer callable before every apply/index mutation, including dependency replacement.
 
 ### Domain, schema and durable state
 
@@ -114,6 +119,8 @@ before the descriptor binding, explicit coordination contract and 64-bit lock-do
   final descriptor-relative identity checks. Deterministic create/update tests exchange a new,
   unsynchronized inode during parent `fsync`; matching and different replacement bytes both
   remain non-applied.
+- The same controlled inode exchanges cover initial create/update and identical/different bytes
+  with private-permission checks enabled: no terminal hash, index attempt or index callback.
 - A third target state survives; tests never write the repository's real `knowledge/`.
 
 ### Concurrency, crash recovery and indexing
@@ -139,6 +146,12 @@ before the descriptor binding, explicit coordination contract and 64-bit lock-do
 - The public document indexer requires an explicit acquire-locks/already-held state. The standard
   indexer can be injected directly without self-blocking, while obsolete one-argument callbacks
   are rejected before attempts or journal changes.
+- Event-controlled standalone tests prove that pre-apply snapshots are discarded, and that
+  shared-global/document locks are already held at the source read, remain held while embedding
+  is paused and at the index commit edge, then allow the concurrent apply to finish consistently.
+- Callback tests cover ordinary functions, compatible/incompatible `wraps` wrappers, partials,
+  wrapped partials, bound methods and callable objects. Replacing the callback after construction
+  fails before accept, legacy apply, apply retry or index retry changes files, attempts or status.
 - Index failure keeps the applied file, stores only a controlled class and succeeds through the
   separate retry.
 

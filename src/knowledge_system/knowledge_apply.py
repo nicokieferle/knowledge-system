@@ -185,7 +185,7 @@ class SecureKnowledgeWriter:
         try:
             temp_fd = os.open(
                 temp,
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                 mode if mode is not None else 0o640,
                 dir_fd=directory,
             )
@@ -232,12 +232,10 @@ class SecureKnowledgeWriter:
                     renamed = False
                     raise KnowledgeConflict("exchange_detected_third_state")
                 os.unlink(temp, dir_fd=directory)
-            os.fsync(directory)
-            self.fault("after_directory_fsync")
-            verify_directory()
-            verified, _, _ = self._read_current(directory, name)
-            if verified != expected:
-                raise KnowledgeIOFailure("verification_failed")
+            # Rename may legitimately change ctime. Establish the final metadata
+            # baseline afterwards, but keep the original written inode pinned.
+            # Both initial apply and retry use the same durability proof.
+            self._sync_target_fd(directory, name, temp_fd, expected, verify_directory)
             return AppliedDocument(
                 content.target_source_id,
                 content.target_source_path,
@@ -271,6 +269,21 @@ class SecureKnowledgeWriter:
             fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         except OSError:
             raise KnowledgeConflict("target_changed") from None
+        try:
+            self._sync_target_fd(directory, name, fd, expected, verify_directory)
+        finally:
+            os.close(fd)
+
+    def _sync_target_fd(
+        self,
+        directory: int,
+        name: str,
+        fd: int,
+        expected: bytes,
+        verify_directory: Callable[[], None],
+    ) -> None:
+        """Bind file/parent synchronization and final validation to this open inode."""
+
         try:
             before = os.fstat(fd)
             self._validate_retry_target(before)
@@ -319,12 +332,10 @@ class SecureKnowledgeWriter:
             raise
         except OSError:
             raise KnowledgeIOFailure("filesystem_error") from None
-        finally:
-            os.close(fd)
 
     @staticmethod
     def _durability_identity(info: os.stat_result) -> tuple[int, ...]:
-        """Bind retry durability to one unchanged inode and its safety properties."""
+        """Bind durability to one unchanged inode and its safety properties."""
 
         return (
             info.st_dev,

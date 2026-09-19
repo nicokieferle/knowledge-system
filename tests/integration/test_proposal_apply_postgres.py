@@ -34,6 +34,7 @@ from knowledge_system.review_schema import REVIEW_SCHEMA
 from knowledge_system.sources import GitMarkdownSource
 from tests.integration import test_proposal_review_postgres as pg_review
 from tests.integration.test_proposal_review_postgres import seed
+from tests.test_indexer import CALLBACK_FORMS, callback_form
 
 
 @pytest.fixture
@@ -364,6 +365,54 @@ def test_incompatible_document_indexer_is_rejected_before_attempt(database):
     assert current.index_attempts == 0
 
 
+@pytest.mark.parametrize("kind", CALLBACK_FORMS)
+@pytest.mark.parametrize("operation", ["accept", "apply_accepted", "retry_apply", "retry_index"])
+def test_changed_incompatible_callback_is_rejected_before_any_mutation(database, kind, operation):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    store = PostgresApplyStore(database)
+    service = ProposalApplyService(
+        database, store=store, document_indexer=document_indexer(database)
+    )
+    if operation != "accept":
+        store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    if operation == "retry_index":
+        store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
+    before = store.get(who, proposal.id)
+    target = database.knowledge_root / "new.md"
+    before_bytes = target.read_bytes() if target.exists() else None
+    service.document_indexer = callback_form(kind, False)
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        if operation == "accept":
+            service.accept_and_apply(who, proposal.id, revision.id, "pending")
+        elif operation == "apply_accepted":
+            service.apply_accepted(who, proposal.id, revision.id)
+        else:
+            getattr(service, operation)(who, proposal.id)
+    assert store.get(who, proposal.id) == before
+    assert (target.read_bytes() if target.exists() else None) == before_bytes
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", CALLBACK_FORMS)
+def test_compatible_callback_forms_index_exactly_once(database, kind):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(
+        database, document_indexer=callback_form(kind, True, document_indexer(database))
+    )
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SHOW statement_timeout").fetchone()[0] == "0"
+    result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    assert result.apply.index_status == "indexed"
+    assert service.retry_index(who, proposal.id).apply == result.apply
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 1
+
+
 def test_two_proposals_for_same_base_have_one_write_and_one_conflict(database):
     initialize(database)
     target = database.knowledge_root / "shared.md"
@@ -486,14 +535,27 @@ def test_apply_journal_stays_failed_until_retry_resynchronizes(database, monkeyp
 
 @pytest.mark.parametrize("old", [None, "old\n"])
 @pytest.mark.parametrize("replacement_bytes", [b"new\n", b"different\n"])
-def test_retry_inode_exchange_never_records_applied(database, monkeypatch, old, replacement_bytes):
+@pytest.mark.parametrize("retry", [False, True])
+def test_retry_inode_exchange_never_records_applied(
+    database, monkeypatch, old, replacement_bytes, retry
+):
     initialize(database)
     target = database.knowledge_root / "new.md"
     if old is not None:
         target.write_text(old, encoding="utf-8")
+        target.chmod(0o640)
     reviews, who, proposal = seed(database)
     revision = reviews.prepare(who, proposal.id).revision
-    service = ProposalApplyService(database)
+    index_calls = []
+
+    def index(document, *, coordination):
+        index_calls.append(document)
+
+    service = ProposalApplyService(
+        database,
+        document_indexer=index,
+        writer=SecureKnowledgeWriter(database.knowledge_root, require_private_permissions=True),
+    )
     real_fsync = os.fsync
 
     def fail_first_parent(fd):
@@ -501,10 +563,11 @@ def test_retry_inode_exchange_never_records_applied(database, monkeypatch, old, 
             raise OSError()
         return real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", fail_first_parent)
-    first = service.accept_and_apply(who, proposal.id, revision.id, "pending")
-    assert first.apply.apply_status == "failed"
-    assert target.read_bytes() == b"new\n"
+    if retry:
+        monkeypatch.setattr(os, "fsync", fail_first_parent)
+        first = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+        assert first.apply.apply_status == "failed"
+        assert target.read_bytes() == b"new\n"
 
     synced_inodes = set()
     replacement_inode = None
@@ -524,10 +587,16 @@ def test_retry_inode_exchange_never_records_applied(database, monkeypatch, old, 
         return real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", exchange_on_parent_fsync)
-    retry = service.retry_apply(who, proposal.id)
-    assert retry.apply.apply_status == "conflict"
-    assert retry.apply.actual_hash is None
-    assert retry.apply.index_status == "pending"
+    result = (
+        service.retry_apply(who, proposal.id)
+        if retry
+        else service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    )
+    assert result.apply.apply_status == "conflict"
+    assert result.apply.actual_hash is None
+    assert result.apply.index_status == "pending"
+    assert result.apply.index_attempts == 0
+    assert index_calls == []
     assert replacement_inode is not None
     assert replacement_inode not in synced_inodes
     with psycopg.connect(database.database_url) as conn:
@@ -793,6 +862,7 @@ def test_document_replace_rolls_back_on_real_postgres_error(database):
             yield InjectingConnection(conn)
 
     changed = type(old)(old.source_id, old.source_path, "# New\n\nNew body.", old.metadata)
+    path.write_text(changed.content, encoding="utf-8")
     with pytest.raises(psycopg.Error):
         index_document(
             database,
@@ -887,6 +957,144 @@ def test_former_hashtext_collision_paths_take_independent_document_locks(databas
             "SELECT pg_try_advisory_xact_lock_shared(%s)", (GLOBAL_INDEX_LOCK_KEY,)
         ).fetchone()[0]
         assert second_conn.execute("SELECT pg_try_advisory_xact_lock(%s)", (second,)).fetchone()[0]
+
+
+def test_standalone_discards_snapshot_captured_before_successful_apply(database):
+    initialize(database)
+    target = database.knowledge_root / "new.md"
+    target.write_text("old\n", encoding="utf-8")
+    stale = GitMarkdownSource(database.knowledge_root).get_document("new.md")
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    assert (
+        service.accept_and_apply(who, proposal.id, revision.id, "pending").apply.index_status
+        == "indexed"
+    )
+    entered, release = Event(), Event()
+    embedded = []
+
+    class PausedEmbedder:
+        def encode(self, values):
+            embedded.extend(values)
+            entered.set()
+            assert release.wait(10)
+            return FakeEmbedder().encode(values)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        task = pool.submit(
+            index_document,
+            database,
+            stale,
+            coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
+            embedder=PausedEmbedder(),
+        )
+        try:
+            assert entered.wait(10)
+            assert embedded == ["(document)\n\nnew"]
+        finally:
+            release.set()
+        assert task.result(timeout=10) == 1
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert service.retry_index(who, proposal.id).apply.index_status == "indexed"
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT content FROM chunks").fetchall() == [("(document)\n\nnew",)]
+
+
+def test_standalone_holds_locks_before_snapshot_through_commit(database, monkeypatch):
+    initialize(database)
+    target = database.knowledge_root / "new.md"
+    target.write_text("old\n", encoding="utf-8")
+    source = GitMarkdownSource(database.knowledge_root)
+    stale = source.get_document("new.md")
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    service.store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    entered, release, apply_attempted = Event(), Event(), Event()
+    key = document_lock_key("knowledge-git", "new.md")
+
+    def assert_locks_held():
+        with psycopg.connect(database.database_url) as conn:
+            assert conn.execute("SHOW statement_timeout").fetchone()[0] == "0"
+            assert not conn.execute("SELECT pg_try_advisory_xact_lock(%s)", (key,)).fetchone()[0]
+            assert not conn.execute(
+                "SELECT pg_try_advisory_xact_lock(%s)", (GLOBAL_INDEX_LOCK_KEY,)
+            ).fetchone()[0]
+
+    real_snapshot = GitMarkdownSource.snapshot
+
+    def snapshot(self, source_id, path):
+        assert_locks_held()
+        return real_snapshot(self, source_id, path)
+
+    monkeypatch.setattr(GitMarkdownSource, "snapshot", snapshot)
+
+    class PausedEmbedder:
+        def encode(self, values):
+            assert values == ["(document)\n\nold"]
+            assert_locks_held()
+            entered.set()
+            assert release.wait(10)
+            return FakeEmbedder().encode(values)
+
+    from knowledge_system import proposal_apply
+
+    real_lock = proposal_apply.lock_document_index
+
+    def observed_lock(conn, source_id, path):
+        apply_attempted.set()
+        real_lock(conn, source_id, path)
+
+    monkeypatch.setattr(proposal_apply, "lock_document_index", observed_lock)
+
+    # Prove the standalone transaction still owns its locks at the commit edge.
+    from knowledge_system.db import connect
+
+    class ObservedConnection:
+        def __init__(self, conn):
+            self.conn = conn
+
+        @contextmanager
+        def transaction(self):
+            with self.conn.transaction():
+                yield
+                assert_locks_held()
+
+        def execute(self, *args, **kwargs):
+            return self.conn.execute(*args, **kwargs)
+
+    @contextmanager
+    def connection_factory(settings):
+        with connect(settings) as conn:
+            yield ObservedConnection(conn)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        standalone = pool.submit(
+            index_document,
+            database,
+            stale,
+            coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
+            embedder=PausedEmbedder(),
+            connection_factory=connection_factory,
+        )
+        try:
+            assert entered.wait(10)
+            apply = pool.submit(service.retry_apply, who, proposal.id)
+            assert apply_attempted.wait(10)
+            assert target.read_text(encoding="utf-8") == "old\n"
+            with psycopg.connect(database.database_url) as conn:
+                assert (
+                    conn.execute("SELECT index_status FROM proposal_applies").fetchone()[0]
+                    == "pending"
+                )
+        finally:
+            release.set()
+        assert standalone.result(timeout=10) == 1
+        assert apply.result(timeout=10).apply.index_status == "indexed"
+    assert target.read_text(encoding="utf-8") == "new\n"
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT content FROM chunks").fetchall() == [("(document)\n\nnew",)]
 
 
 def test_full_index_and_parallel_applies_use_one_consistent_lock_order(database, monkeypatch):

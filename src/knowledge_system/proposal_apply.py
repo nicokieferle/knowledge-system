@@ -392,35 +392,46 @@ class ProposalApplyService:
         self.store = store or PostgresApplyStore(settings)
         self.source = source or GitMarkdownSource(settings.knowledge_root)
         self.writer = writer or SecureKnowledgeWriter(settings.knowledge_root)
-        self.document_indexer = document_indexer or partial(index_document, settings)
+        self.document_indexer = (
+            partial(index_document, settings) if document_indexer is None else document_indexer
+        )
         validate_document_indexer(self.document_indexer)
 
     def get(self, identity: ClientIdentity, proposal_id: UUID) -> ApplyView:
         return self.store.get(identity, proposal_id)
 
     def accept_and_apply(self, identity, proposal_id, review_id, expected_status) -> ApplyView:
+        index = self._validated_indexer()
         self.store.accept_and_intent(identity, proposal_id, review_id, expected_status)
-        return self._apply_then_index(identity, proposal_id)
+        return self._apply_then_index(identity, proposal_id, index)
 
     def apply_accepted(self, identity, proposal_id, review_id) -> ApplyView:
+        index = self._validated_indexer()
         self.store.ensure_intent(identity, proposal_id, review_id)
-        return self._apply_then_index(identity, proposal_id)
+        return self._apply_then_index(identity, proposal_id, index)
 
     def retry_apply(self, identity, proposal_id) -> ApplyView:
-        return self._apply_then_index(identity, proposal_id)
+        return self._apply_then_index(identity, proposal_id, self._validated_indexer())
 
     def retry_index(self, identity, proposal_id) -> ApplyView:
-        return self.store.execute_index(identity, proposal_id, self.source, self.document_indexer)
+        return self.store.execute_index(
+            identity, proposal_id, self.source, self._validated_indexer()
+        )
 
     def refresh_review(self, identity, proposal_id) -> ReviewView:
         replacement = self.store.ensure_refresh_proposal(identity, proposal_id)
         reviews = ProposalReviewService(self.store.reviews, self.source)
         return reviews.prepare(identity, replacement)
 
-    def _apply_then_index(self, identity, proposal_id) -> ApplyView:
+    def _validated_indexer(self) -> DocumentIndexer:
+        # Capture and validate at the mutation boundary as well as construction:
+        # replacing an injected dependency must not defer errors until after apply.
+        index = self.document_indexer
+        validate_document_indexer(index)
+        return index
+
+    def _apply_then_index(self, identity, proposal_id, index: DocumentIndexer) -> ApplyView:
         result = self.store.execute_apply(identity, proposal_id, self.writer)
         if result.apply and result.apply.apply_status == ApplyStatus.APPLIED:
-            result = self.store.execute_index(
-                identity, proposal_id, self.source, self.document_indexer
-            )
+            result = self.store.execute_index(identity, proposal_id, self.source, index)
         return result

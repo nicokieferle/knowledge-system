@@ -72,8 +72,12 @@ apply-ID-scoped temporary file is created in the same directory with
 are `fsync`ed, and existing mode bits are preserved when replacing. Creation uses Linux
 `renameat2(RENAME_NOREPLACE)`. Replacement uses `RENAME_EXCHANGE`: this prevents a third state
 that races after the last read from being destroyed. The displaced entry is byte/metadata
-checked before removal. Finally the parent directory is `fsync`ed and the resulting target is
-securely reread. Only regular temporary files with the exact apply-specific prefix are ever
+checked before removal. The original read/write staging descriptor stays open after rename.
+Initial apply and exact-new retry share the same final durability protocol: establish the
+post-rename metadata baseline, verify and `fsync` the pinned inode, `fsync` its parent, then
+compare the descriptor-relative target entry, exact bytes and safety metadata with that same
+descriptor before success. An identical-content replacement inode is not accepted as durable.
+Only regular temporary files with the exact apply-specific prefix are ever
 considered for recovery; ambiguous states are preserved as conflicts.
 
 No directory is created implicitly, no deletion operation exists, no process-local file lock
@@ -103,7 +107,10 @@ bound revision. Before that retry can succeed, it keeps the safely opened target
 alive while it verifies and `fsync`s that inode, `fsync`s the pinned parent directory, and then
 compares the descriptor-relative target entry with the same descriptor again. Device, inode,
 type, link count, permissions/ownership, size and change metadata plus exact accepted bytes must
-remain stable; parent metadata also detects a rename-away-and-back during the protocol.
+remain stable; parent metadata provides an additional conservative namespace-change guard.
+Unrelated sibling directory activity can therefore fail closed and require another explicit
+retry. Timestamp fields are not claimed to be universal monotonic change counters; the supported
+model remains local Linux storage with stable inode semantics and trusted same-UID processes.
 Persistent synchronization failure therefore remains failed, a transient failure can be healed
 by an explicit retry, and identical bytes on an exchanged unsynchronized inode are a conflict.
 An old/absent target proceeds. Every other state is a conflict and is never overwritten. Apply
@@ -132,10 +139,20 @@ After apply, the source is securely reread and its hash must still equal the bou
 `index_document` chunks exactly those bytes, computes embeddings, and deletes/reinserts only
 that `(source_id, source_path)` in one PostgreSQL transaction. The unique source/path/ordinal
 index prevents duplicates. The low-level document function can also acquire the shared/document
-locks for standalone replacement; apply passes an already coordinated snapshot. Every call must
-provide the typed coordination state, and every injected callback must accept that keyword.
-Incompatible legacy one-argument callbacks are rejected before an index attempt rather than
-reacquiring the held lock on another connection. No global production reindex is started.
+locks for standalone replacement; apply passes an already coordinated snapshot. In standalone
+`ACQUIRE_LOCKS` mode, the supplied document identifies only source/path: its cached content is
+discarded. A secure canonical snapshot is read after shared-global/document lock acquisition;
+both locks remain held through chunking, embedding and commit. An absent/unsafe source fails
+before index replacement. Thus an old supplied snapshot cannot overwrite a newer successful
+apply, and an apply waits while standalone embedding holds the document lock.
+
+Every call must provide the typed coordination state, and every injected callback must accept
+that keyword. Validation checks the actual outer signature without following `__wrapped__`;
+functions, forwarding wrappers, partials, bound methods and callable objects are supported.
+The service captures and validates the callback again before acceptance/intent or retry mutation,
+so an incompatible replaced dependency cannot change attempts, files or journal status.
+`LOCKS_HELD` callbacks do not reacquire locks on their index connection. Callbacks are trusted
+application code, not a sandbox for arbitrary plugin behavior. No global production reindex is started.
 
 ## Browser and client boundary
 

@@ -35,7 +35,11 @@ def validate_document_indexer(index: object) -> None:
     """Reject the obsolete one-argument callback contract before any apply work."""
 
     try:
-        inspect.signature(index).bind(object(), coordination=DocumentIndexCoordination.LOCKS_HELD)
+        # __wrapped__ describes the decorated function, not necessarily the
+        # actual outer callable. Check the interface we will really invoke.
+        inspect.signature(index, follow_wrapped=False).bind(
+            object(), coordination=DocumentIndexCoordination.LOCKS_HELD
+        )
     except (TypeError, ValueError):
         raise TypeError(
             "document_indexer must accept document and keyword-only coordination"
@@ -56,22 +60,32 @@ def index_document(
     and canonical document locks before they read the source snapshot. Making
     this state mandatory prevents an injected standard indexer from silently
     reacquiring its own lock on a second connection.
+
+    In ``ACQUIRE_LOCKS`` mode the supplied document identifies the target only:
+    its potentially stale content/metadata is discarded. Read the canonical
+    source under the locks and hold them through embedding and index commit.
     """
     if coordination is not DocumentIndexCoordination.ACQUIRE_LOCKS and (
         coordination is not DocumentIndexCoordination.LOCKS_HELD
     ):
         raise ValueError("Invalid document-index coordination state")
-    chunks = chunk_markdown_text(document.content, document.source_path)
-    if embedder is None and chunks:
-        from .embedder import LocalEmbedder
-
-        embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
-    vectors = embedder.encode([chunk.content for chunk in chunks]) if chunks else []
-    if len(vectors) != len(chunks):
-        raise RuntimeError("Embedding result count mismatch")
     with connection_factory(settings) as conn, conn.transaction():
         if coordination is DocumentIndexCoordination.ACQUIRE_LOCKS:
             lock_document_index(conn, document.source_id, document.source_path)
+            path, current = GitMarkdownSource(settings.knowledge_root).snapshot(
+                document.source_id, document.source_path
+            )
+            if current is None:
+                raise FileNotFoundError("Document index source is absent")
+            document = SourceDocument(document.source_id, path, current, {"path": path})
+        chunks = chunk_markdown_text(document.content, document.source_path)
+        if embedder is None and chunks:
+            from .embedder import LocalEmbedder
+
+            embedder = LocalEmbedder(settings.embedding_model, settings.embedding_dimensions)
+        vectors = embedder.encode([chunk.content for chunk in chunks]) if chunks else []
+        if len(vectors) != len(chunks):
+            raise RuntimeError("Embedding result count mismatch")
         # Delete and insert share one PostgreSQL transaction: readers observe the
         # complete old document or the complete new document, never a mixture.
         conn.execute(

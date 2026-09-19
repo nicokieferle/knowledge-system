@@ -199,7 +199,8 @@ def test_transient_directory_fsync_error_is_resynchronized_on_retry(tmp_path, mo
     recovered = SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
     assert recovered.wrote is False
     assert directory_calls == 2
-    assert regular_calls == 3
+    # Initial apply syncs data, mode and post-rename metadata; retry syncs again.
+    assert regular_calls == 4
     assert not list(tmp_path.glob(".knowledge-apply-*"))
 
 
@@ -230,14 +231,15 @@ def test_persistent_directory_fsync_error_keeps_retry_failed(tmp_path, monkeypat
 
     assert target.read_text(encoding="utf-8") == "accepted\n"
     assert directory_calls == 2
-    assert regular_calls == 3
+    assert regular_calls == 4
 
 
 @pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")
 @pytest.mark.parametrize("old", [None, "old\n"])
 @pytest.mark.parametrize("replacement_bytes", [b"accepted\n", b"different\n"])
+@pytest.mark.parametrize("retry", [False, True])
 def test_exact_new_retry_rejects_inode_exchange_during_parent_fsync(
-    tmp_path, monkeypatch, old, replacement_bytes
+    tmp_path, monkeypatch, old, replacement_bytes, retry
 ):
     target = tmp_path / "notes.md"
     if old is not None:
@@ -251,10 +253,11 @@ def test_exact_new_retry_rejects_inode_exchange_during_parent_fsync(
             raise OSError()
         return real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", fail_first_parent)
-    with pytest.raises(KnowledgeIOFailure, match="filesystem_error"):
-        SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
-    assert target.read_bytes() == b"accepted\n"
+    if retry:
+        monkeypatch.setattr(os, "fsync", fail_first_parent)
+        with pytest.raises(KnowledgeIOFailure, match="filesystem_error"):
+            SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
+        assert target.read_bytes() == b"accepted\n"
 
     synced_inodes = set()
     replacement_inode = None

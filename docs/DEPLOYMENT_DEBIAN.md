@@ -69,8 +69,8 @@ other filesystems without equivalent guarantees are unsupported. A hard process,
 container, runner, host or power failure can interrupt the web request; the durable
 journal and apply-specific temp state make supported retries deterministic, but no
 global PostgreSQL/filesystem/index transaction or hardware-level guarantee is claimed.
-Exact-new recovery keeps the synchronized file descriptor open through parent `fsync`
-and final inode validation. This closes exchanges during that recovery protocol, not
+Initial apply and exact-new recovery keep the synchronized file descriptor open through
+parent `fsync` and final inode validation. This closes exchanges during that protocol, not
 arbitrary hostile same-UID mutation after the entire operation has completed.
 
 ## V3.2.1 private review console (separate future rollout)
