@@ -108,8 +108,9 @@ alive while it verifies and `fsync`s that inode, `fsync`s the pinned parent dire
 compares the descriptor-relative target entry with the same descriptor again. Device, inode,
 type, link count, permissions/ownership, size and change metadata plus exact accepted bytes must
 remain stable; parent metadata provides an additional conservative namespace-change guard.
-Unrelated sibling directory activity can therefore fail closed and require another explicit
-retry. Timestamp fields are not claimed to be universal monotonic change counters; the supported
+Uncoordinated external sibling activity can therefore fail closed and require another explicit
+retry. Cooperating writers lock that parent namespace as described below. Timestamp fields are
+not claimed to be universal monotonic change counters; the supported
 model remains local Linux storage with stable inode semantics and trusted same-UID processes.
 Persistent synchronization failure therefore remains failed, a transient failure can be healed
 by an explicit retry, and identical bytes on an exchanged unsynchronized inode are a conflict.
@@ -119,11 +120,19 @@ failures never trigger indexing. Index failures never roll back or hide the appl
 ## Concurrency and indexing
 
 The PostgreSQL lock order is proposal/apply row, shared global index lock, then document lock.
+Filesystem writers additionally take a canonical parent-directory lock, last in that order,
+before any staging/rename/unlink. This prevents two legitimate sibling writes from invalidating
+each other's directory metadata guard. The parent lock lasts through the file-apply transaction,
+but is released before document indexing; different parents and document embeddings remain
+parallel. Full index takes no parent lock and there is no reverse acquisition edge.
 The document identity reuses the validated portable source/path namespace and casefolds its
 ASCII-only path components, so aliases such as `note.md` and `Note.md` serialize. Its PostgreSQL
 key uses a length-framed, deterministic BLAKE2 identity in a document-only 64-bit domain; the
 global key occupies a disjoint domain. Documents retain 62 digest bits, so theoretical document
 collisions remain possible but the former practical 32-bit `hashtext` collision is removed.
+Parent keys use 61 digest bits in a separate `110` domain, disjoint from the global/document
+keys and existing signed-32-bit client/schema keys. Their theoretical collisions likewise only
+serialize unrelated parents; advisory locks require no persistent-data migration.
 Concurrent identical submits create one decision, intent, file result and index operation. Two
 proposals based on the same old file or portable case alias serialize; one writes and the other
 observes a conflict. Refresh during an apply waits for the row and cannot replace a successful

@@ -17,7 +17,7 @@ independent filesystem backup remain operator prerequisites and were not execute
 ## Local environment and commands
 
 The final local gate used Python 3.13, rootless Docker, PostgreSQL 17.11 and pgvector 0.8.6.
-It completed 415 unit/HTTP tests and 107 real PostgreSQL integration tests, with no failures
+It completed 416 unit/HTTP tests and 109 real PostgreSQL integration tests, with no failures
 or skips in either separately executed group. The only warning was the upstream Starlette
 `BlockingPortal` deprecation noted below. The final rootless BuildKit image build and the
 built-image database smoke test also succeeded; the smoke test reported
@@ -84,6 +84,10 @@ callback bypass were independently reproduced against `f3f267413493efb5abf38dddc
 Initial apply and retry now share one descriptor-bound durability check. Standalone indexing
 discards cached bytes and snapshots under locks held through commit. Callback validation checks
 the outer callable before every apply/index mutation, including dependency replacement.
+The first CI run of this remediation exposed sibling writes invalidating the conservative parent
+metadata guard. This was reproduced deterministically and fixed by a parent-scoped PostgreSQL
+write lock after the document lock. Event tests prove serialization within one parent and
+completion of an independent-parent apply while the first writer remains paused.
 
 ### Domain, schema and durable state
 

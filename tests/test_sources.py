@@ -9,6 +9,7 @@ import pytest
 from knowledge_system.index_coordination import (
     GLOBAL_INDEX_LOCK_KEY,
     document_lock_key,
+    parent_write_lock_key,
 )
 from knowledge_system.proposal_review import InvalidTarget
 from knowledge_system.sources import (
@@ -102,3 +103,25 @@ def test_document_lock_keys_are_stable_casefolded_and_domain_separated() -> None
         text=True,
     ).stdout.strip()
     assert int(output) == first
+
+
+def test_parent_write_keys_are_casefolded_scoped_and_domain_separated():
+    root = parent_write_lock_key("knowledge-git", "a.md")
+    assert root == parent_write_lock_key("knowledge-git", "b.md")
+    folder = parent_write_lock_key("knowledge-git", "Folder/a.md")
+    assert folder == parent_write_lock_key("knowledge-git", "folder/B.md")
+    assert folder != root
+    assert -(1 << 62) <= root < -(1 << 61)
+    assert document_lock_key("knowledge-git", "a.md") < -(1 << 62)
+    assert GLOBAL_INDEX_LOCK_KEY > 0
+    output = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from knowledge_system.index_coordination import parent_write_lock_key; print(parent_write_lock_key('knowledge-git', 'a.md'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert int(output) == root

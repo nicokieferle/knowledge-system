@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from .client_state import ClientIdentity
 from .config import Settings
 from .db import connect
-from .index_coordination import lock_document_index
+from .index_coordination import lock_document_index, lock_parent_write
 from .indexer import (
     DocumentIndexCoordination,
     DocumentIndexer,
@@ -241,6 +241,9 @@ class PostgresApplyStore:
             # Every apply/index path uses this order; full indexing takes only
             # the exclusive global lock before reading its source snapshot.
             lock_document_index(conn, apply.target_source_id, apply.target_source_path)
+            # Writers additionally coordinate their shared parent namespace;
+            # no caller takes this lock before a row/global/document lock.
+            lock_parent_write(conn, apply.target_source_id, apply.target_source_path)
             try:
                 result = writer.apply(apply.id, view.revision)
             except KnowledgeConflict as exc:

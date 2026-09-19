@@ -21,6 +21,7 @@ from knowledge_system.db import init_db
 from knowledge_system.index_coordination import (
     GLOBAL_INDEX_LOCK_KEY,
     document_lock_key,
+    parent_write_lock_key,
 )
 from knowledge_system.indexer import (
     DocumentIndexCoordination,
@@ -1187,3 +1188,76 @@ def test_full_index_and_parallel_applies_use_one_consistent_lock_order(database,
     }
     for who, pid in jobs:
         assert service.retry_apply(who, pid).apply.index_status == "indexed"
+
+
+@pytest.mark.parametrize("same_parent", [True, False])
+def test_parent_namespace_writes_are_coordinated_without_global_serialization(
+    database, monkeypatch, same_parent
+):
+    initialize(database)
+    (database.knowledge_root / "folder").mkdir()
+    second_path = "other.md" if same_parent else "folder/other.md"
+    jobs = []
+    store = PostgresApplyStore(database)
+    for path in ("new.md", second_path):
+        reviews, who, proposal = seed(database)
+        revision = reviews.prepare(who, proposal.id, target_source_path=path).revision
+        store.accept_and_intent(who, proposal.id, revision.id, "pending")
+        jobs.append((who, proposal.id))
+    at_parent_fsync, second_attempted, release_first = Event(), Event(), Event()
+
+    def pause_first(phase):
+        if phase == "after_directory_fsync":
+            at_parent_fsync.set()
+            assert release_first.wait(10)
+
+    from knowledge_system import proposal_apply
+
+    real_lock = proposal_apply.lock_parent_write
+
+    def observe_parent(conn, source_id, path):
+        if path == second_path:
+            second_attempted.set()
+        real_lock(conn, source_id, path)
+
+    monkeypatch.setattr(proposal_apply, "lock_parent_write", observe_parent)
+    first_service = ProposalApplyService(
+        database,
+        store=store,
+        document_indexer=document_indexer(database),
+        writer=SecureKnowledgeWriter(database.knowledge_root, pause_first),
+    )
+    second_service = ProposalApplyService(
+        database, store=store, document_indexer=document_indexer(database)
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(first_service.retry_apply, *jobs[0])
+        try:
+            assert at_parent_fsync.wait(10)
+            with psycopg.connect(database.database_url) as conn:
+                assert not conn.execute(
+                    "SELECT pg_try_advisory_xact_lock(%s)",
+                    (parent_write_lock_key("knowledge-git", "new.md"),),
+                ).fetchone()[0]
+                second_free = conn.execute(
+                    "SELECT pg_try_advisory_xact_lock(%s)",
+                    (parent_write_lock_key("knowledge-git", second_path),),
+                ).fetchone()[0]
+                assert second_free is (not same_parent)
+            second = pool.submit(second_service.retry_apply, *jobs[1])
+            assert second_attempted.wait(10)
+            if same_parent:
+                assert not (database.knowledge_root / second_path).exists()
+            else:
+                # A different parent's entire apply/index finishes while the
+                # first writer is still paused inside its durability protocol.
+                assert second.result(timeout=10).apply.index_status == "indexed"
+        finally:
+            release_first.set()
+        assert first.result(timeout=10).apply.index_status == "indexed"
+        assert second.result(timeout=10).apply.index_status == "indexed"
+    with psycopg.connect(database.database_url) as conn:
+        assert dict(conn.execute("SELECT source_path, content FROM chunks").fetchall()) == {
+            "new.md": "(document)\n\nnew",
+            second_path: "(document)\n\nnew",
+        }
