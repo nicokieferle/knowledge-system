@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from enum import StrEnum
+from functools import partial
 from typing import Protocol
 
 from pgvector import Vector
@@ -13,6 +14,11 @@ from .index_coordination import lock_document_index, lock_full_index
 from .sources import GitMarkdownSource, SourceAdapter, SourceDocument
 
 ExistingChunkState = tuple[str, str]
+DocumentIndexResult = int | None
+
+
+class DocumentIndexerContractError(TypeError):
+    """An injected indexer did not satisfy the synchronous completion contract."""
 
 
 class DocumentIndexCoordination(StrEnum):
@@ -23,12 +29,14 @@ class DocumentIndexCoordination(StrEnum):
 
 
 class DocumentIndexer(Protocol):
+    """Complete indexing synchronously; return a chunk count or None, never deferred work."""
+
     def __call__(
         self,
         document: SourceDocument,
         *,
         coordination: DocumentIndexCoordination,
-    ) -> object: ...
+    ) -> DocumentIndexResult: ...
 
 
 def validate_document_indexer(index: object) -> None:
@@ -44,6 +52,71 @@ def validate_document_indexer(index: object) -> None:
         raise TypeError(
             "document_indexer must accept document and keyword-only coordination"
         ) from None
+
+    # Inspect execution mode separately from the outer calling interface above.
+    # A synchronous forwarding wrapper can still return its wrapped coroutine.
+    # Follow known wrapper/partial/method edges conservatively, without invoking
+    # the callback. Callable objects expose their execution mode via __call__.
+    pending = [index]
+    seen = set()
+    while pending:
+        candidate = pending.pop()
+        if id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        if (
+            inspect.iscoroutinefunction(candidate)
+            or inspect.isgeneratorfunction(candidate)
+            or inspect.isasyncgenfunction(candidate)
+        ):
+            raise DocumentIndexerContractError("document_indexer must be synchronous")
+        wrapped = getattr(candidate, "__wrapped__", None)
+        if wrapped is not None:
+            pending.append(wrapped)
+        if isinstance(candidate, partial):
+            pending.append(candidate.func)
+        if inspect.ismethod(candidate):
+            pending.append(candidate.__func__)
+        elif not inspect.isroutine(candidate):
+            call = getattr(type(candidate), "__call__", None)  # noqa: B004 - inspect execution mode
+            if call is not None:
+                pending.append(call)
+
+
+def validate_document_index_result(result: object) -> None:
+    """Reject deferred/unknown results without running foreign callback logic.
+
+    The standard indexer returns a nonnegative chunk count; synchronous adapters
+    may discard it and return None. bool is not a chunk count. Only native,
+    never-started deferred objects can be safely closed: closing a suspended
+    object could execute its finally blocks. Never drive an arbitrary awaitable,
+    call an unknown object's close method, or create an event loop here.
+    """
+    if result is None or (type(result) is int and result >= 0):
+        return
+    if (
+        inspect.iscoroutine(result)
+        and inspect.getcoroutinestate(result) == inspect.CORO_CREATED
+        or inspect.isgenerator(result)
+        and inspect.getgeneratorstate(result) == inspect.GEN_CREATED
+    ):
+        result.close()
+    elif inspect.isasyncgen(result):
+        # Python 3.11 lacks safe async-generator state inspection. In that case
+        # leave lifecycle ownership with the caller rather than guessing from
+        # interpreter-specific frame offsets and potentially entering user code.
+        get_state = getattr(inspect, "getasyncgenstate", None)
+        if get_state is not None and get_state(result) == "AGEN_CREATED":
+            # This native aclose operation on a never-started async generator
+            # cannot enter its body/finally or await user code. No event loop.
+            closing = result.aclose()
+            try:
+                closing.send(None)
+            except StopIteration:
+                pass
+    raise DocumentIndexerContractError(
+        "document_indexer must return None or a non-negative int after synchronous completion"
+    )
 
 
 def index_document(

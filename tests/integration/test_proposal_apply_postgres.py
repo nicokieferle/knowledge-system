@@ -35,7 +35,14 @@ from knowledge_system.review_schema import REVIEW_SCHEMA
 from knowledge_system.sources import GitMarkdownSource
 from tests.integration import test_proposal_review_postgres as pg_review
 from tests.integration.test_proposal_review_postgres import seed
-from tests.test_indexer import CALLBACK_FORMS, callback_form
+from tests.test_indexer import (
+    CALLBACK_FORMS,
+    DEFERRED_FORMS,
+    DEFERRED_KINDS,
+    callback_form,
+    deferred_callback,
+    deferred_result,
+)
 
 
 @pytest.fixture
@@ -410,6 +417,97 @@ def test_compatible_callback_forms_index_exactly_once(database, kind):
     result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
     assert result.apply.index_status == "indexed"
     assert service.retry_index(who, proposal.id).apply == result.apply
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("kind", DEFERRED_KINDS)
+@pytest.mark.parametrize("form", DEFERRED_FORMS)
+@pytest.mark.parametrize("operation", ["accept", "apply_accepted", "retry_apply", "retry_index"])
+def test_deferred_callback_rejected_before_any_mutation(database, kind, form, operation):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    if operation != "accept":
+        service.store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    if operation == "retry_index":
+        service.store.execute_apply(who, proposal.id, service.writer)
+    before = service.get(who, proposal.id)
+    target = database.knowledge_root / "new.md"
+    before_bytes = target.read_bytes() if target.exists() else None
+    service.document_indexer = deferred_callback(kind, form)
+    with pytest.raises(TypeError, match="document_indexer must be synchronous"):
+        if operation == "accept":
+            service.accept_and_apply(who, proposal.id, revision.id, "pending")
+        elif operation == "apply_accepted":
+            service.apply_accepted(who, proposal.id, revision.id)
+        else:
+            getattr(service, operation)(who, proposal.id)
+    assert service.get(who, proposal.id) == before
+    assert (target.read_bytes() if target.exists() else None) == before_bytes
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
+        if operation == "accept":
+            assert conn.execute("SELECT count(*) FROM proposal_applies").fetchone()[0] == 0
+            assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("kind", (*DEFERRED_KINDS, "awaitable", "future"))
+@pytest.mark.parametrize("committed_first", [False, True])
+def test_deferred_result_fails_index_and_real_retry_recovers(
+    database, kind, committed_first, recwarn, caplog
+):
+    import gc
+
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    entered = []
+    real_index = document_indexer(database)
+
+    def unexpected_result(document, *, coordination):
+        if committed_first:
+            real_index(document, coordination=coordination)
+        return deferred_result(kind, entered)
+
+    service = ProposalApplyService(database, document_indexer=unexpected_result)
+    failed = service.accept_and_apply(who, proposal.id, revision.id, "pending").apply
+    assert failed.apply_status == "applied" and failed.index_status == "failed"
+    assert failed.index_error_class == "index_callback_contract"
+    assert failed.indexed_at is None
+    assert failed.apply_attempts == failed.index_attempts == 1
+    assert (database.knowledge_root / "new.md").read_text() == "new\n"
+    assert not entered
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == int(committed_first)
+    service.document_indexer = real_index
+    recovered = service.retry_index(who, proposal.id).apply
+    assert recovered.apply_status == "applied" and recovered.index_status == "indexed"
+    assert recovered.apply_attempts == 1 and recovered.index_attempts == 2
+    assert recovered.index_error_class is None
+    assert service.retry_index(who, proposal.id).apply == recovered
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT content FROM chunks").fetchall() == [("(document)\n\nnew",)]
+    gc.collect()
+    assert not recwarn.list
+    assert "class=index_callback_contract" in caplog.text
+
+
+def test_callback_captured_before_intent_is_used_even_if_dependency_changes(database, monkeypatch):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    original = service.store.accept_and_intent
+
+    def replace_dependency(*args):
+        service.document_indexer = deferred_callback("coroutine", "function")
+        return original(*args)
+
+    monkeypatch.setattr(service.store, "accept_and_intent", replace_dependency)
+    result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    assert result.apply.index_status == "indexed"
     with psycopg.connect(database.database_url) as conn:
         assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 1
 

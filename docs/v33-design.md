@@ -163,6 +163,27 @@ so an incompatible replaced dependency cannot change attempts, files or journal 
 `LOCKS_HELD` callbacks do not reacquire locks on their index connection. Callbacks are trusted
 application code, not a sandbox for arbitrary plugin behavior. No global production reindex is started.
 
+The callback contract is strictly synchronous. Before any acceptance/intent or attempt mutation,
+the outer signature is checked with `follow_wrapped=False`; execution-mode inspection separately
+follows known `__wrapped__`, partial and bound-method/`__call__` edges. Coroutine, generator and
+async-generator functions on those edges are rejected, even behind synchronous forwarding wrappers.
+Unannotated closures cannot always be classified statically, so the actual result is checked too:
+only `None` (a synchronous adapter discards its result) or an exact nonnegative `int` (the public
+indexer's chunk count, excluding `bool`) confirms completion. This is not proof that arbitrary
+injected code indexed correctly; callbacks remain trusted implementations of that contract.
+
+Unexpected deferred/unknown results store `index_callback_contract` and leave the durable file
+`applied` but the index `failed`, never `indexed`. A corrected synchronous callback can then retry
+and atomically replace the chunks, including when the faulty callback already committed them.
+Native never-started coroutines/generators are closed without entering their bodies; an unstarted
+async generator is closed using its native close operation, without an event loop. Suspended
+objects or async generators without safe state inspection (Python 3.11) retain caller ownership.
+Arbitrary awaitables/futures are not driven, cancelled or closed via foreign methods:
+doing so could execute callback/finally logic. Their existing owner remains responsible for their
+lifetime. No `asyncio.run`, background task or hidden asynchronous callback support is introduced.
+No schema migration or automatic repair of previously incorrect terminal `indexed` records is
+performed; reconciling such historical data would be a separate explicit operator action.
+
 ## Browser and client boundary
 
 Pending/deferred proposals show the complete immutable revision and full diff before

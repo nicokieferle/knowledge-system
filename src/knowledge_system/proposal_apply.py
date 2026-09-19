@@ -16,7 +16,9 @@ from .index_coordination import lock_document_index, lock_parent_write
 from .indexer import (
     DocumentIndexCoordination,
     DocumentIndexer,
+    DocumentIndexerContractError,
     index_document,
+    validate_document_index_result,
     validate_document_indexer,
 )
 from .knowledge_apply import (
@@ -297,12 +299,20 @@ class PostgresApplyStore:
                 )
                 if current is None or content_hash(current) != apply.expected_new_hash:
                     raise KnowledgeConflict("applied_source_changed")
-                index(
+                result = index(
                     SourceDocument(
                         apply.target_source_id, normalized, current, {"path": normalized}
                     ),
                     coordination=DocumentIndexCoordination.LOCKS_HELD,
                 )
+                validate_document_index_result(result)
+            except DocumentIndexerContractError:
+                conn.execute(
+                    """UPDATE proposal_applies SET index_status='failed',
+                    index_error_class='index_callback_contract' WHERE id=%s""",
+                    (apply.id,),
+                )
+                LOG.error("proposal_index_failed class=index_callback_contract")
             except KnowledgeConflict as exc:
                 conn.execute(
                     """UPDATE proposal_applies SET index_status='failed',

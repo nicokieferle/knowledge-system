@@ -17,7 +17,7 @@ independent filesystem backup remain operator prerequisites and were not execute
 ## Local environment and commands
 
 The final local gate used Python 3.13, rootless Docker, PostgreSQL 17.11 and pgvector 0.8.6.
-It completed 416 unit/HTTP tests and 109 real PostgreSQL integration tests, with no failures
+It completed 463 unit/HTTP tests and 240 real PostgreSQL integration tests, with no failures
 or skips in either separately executed group. The only warning was the upstream Starlette
 `BlockingPortal` deprecation noted below. The final rootless BuildKit image build and the
 built-image database smoke test also succeeded; the smoke test reported
@@ -156,6 +156,13 @@ completion of an independent-parent apply while the first writer remains paused.
 - Callback tests cover ordinary functions, compatible/incompatible `wraps` wrappers, partials,
   wrapped partials, bound methods and callable objects. Replacing the callback after construction
   fails before accept, legacy apply, apply retry or index retry changes files, attempts or status.
+- Final-review callback regressions cover coroutine, generator and async-generator functions in
+  ten function/wrapper/partial/method/callable forms across all four mutation entry points.
+  Unexpected native deferred objects, custom awaitables and futures fail indexing and remain
+  recoverable by the real synchronous indexer, both before and after an injected index commit.
+  Native unstarted objects are closed without entering callback bodies or raising resource
+  warnings; suspended objects are not closed by the validator. Captured callbacks survive a
+  dependency replacement between validation and intent creation.
 - Index failure keeps the applied file, stores only a controlled class and succeeds through the
   separate retry.
 

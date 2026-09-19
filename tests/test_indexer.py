@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import gc
+import inspect
+from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial, wraps
@@ -14,6 +17,7 @@ from knowledge_system.indexer import (
     DocumentIndexCoordination,
     index_document,
     index_knowledge,
+    validate_document_index_result,
     validate_document_indexer,
 )
 from knowledge_system.proposal_apply import ProposalApplyService
@@ -217,3 +221,186 @@ def test_falsey_incompatible_callback_cannot_silently_select_the_default():
 
     with pytest.raises(TypeError, match="keyword-only coordination"):
         ProposalApplyService(_settings(), document_indexer=Indexer())
+
+
+DEFERRED_KINDS = ("coroutine", "generator", "async_generator")
+DEFERRED_FORMS = (
+    "function",
+    "partial",
+    "bound",
+    "callable",
+    "wrapper",
+    "nested",
+    "wrapped_partial",
+    "partial_callable",
+    "wrapped_bound",
+    "partial_subclass",
+)
+
+
+def deferred_callback(kind, form):
+    """Inspectable deferred code, including forwarding wrappers and bound methods."""
+    if kind == "coroutine":
+
+        async def target(document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+
+        async def method(self, document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+    elif kind == "generator":
+
+        def target(document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+            yield
+
+        def method(self, document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+            yield
+    else:
+
+        async def target(document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+            yield
+
+        async def method(self, document, *, coordination):
+            raise AssertionError("deferred body must not execute")
+            yield
+
+    if form == "partial_subclass":
+        # The actual __call__ can differ from the partial's synchronous func.
+        deferred_partial = type("DeferredPartial", (partial,), {"__call__": method})
+        return deferred_partial(lambda document, *, coordination: None)
+    if form in ("bound", "callable", "partial_callable", "wrapped_bound"):
+        instance = type("DeferredIndexer", (), {"__call__": method})()
+        target = instance.__call__ if form in ("bound", "wrapped_bound") else instance
+    if form in ("partial", "partial_callable"):
+        return partial(target)
+    if form in ("wrapper", "nested", "wrapped_partial", "wrapped_bound"):
+
+        @wraps(target)
+        def wrapper(*args, **kwargs):
+            return target(*args, **kwargs)
+
+        if form == "nested":
+
+            @wraps(wrapper)
+            def outer(*args, **kwargs):
+                return wrapper(*args, **kwargs)
+
+            return partial(outer)
+        return partial(wrapper) if form == "wrapped_partial" else wrapper
+    return target
+
+
+@pytest.mark.parametrize("kind", DEFERRED_KINDS)
+@pytest.mark.parametrize("form", DEFERRED_FORMS)
+def test_deferred_callbacks_are_rejected_at_construction(kind, form):
+    with pytest.raises(TypeError, match="document_indexer must be synchronous"):
+        ProposalApplyService(_settings(), document_indexer=deferred_callback(kind, form))
+
+
+def deferred_result(kind, entered):
+    if kind == "coroutine":
+
+        async def work():
+            entered.append("body")
+
+        return work()
+    if kind == "generator":
+
+        def work():
+            entered.append("body")
+            yield
+
+        return work()
+    if kind == "async_generator":
+
+        async def work():
+            entered.append("body")
+            yield
+
+        return work()
+    if kind == "awaitable":
+
+        class Awaitable:
+            def __await__(self):
+                entered.append("await")
+                yield
+
+            def close(self):
+                entered.append("foreign close")
+
+        return Awaitable()
+    if kind == "future":
+        return Future()
+    raise AssertionError(kind)
+
+
+@pytest.mark.parametrize("kind", (*DEFERRED_KINDS, "awaitable", "future"))
+def test_deferred_results_are_rejected_and_only_unstarted_native_objects_closed(kind, recwarn):
+    entered = []
+    result = deferred_result(kind, entered)
+    with pytest.raises(TypeError, match="after synchronous completion"):
+        validate_document_index_result(result)
+    assert entered == []
+    if kind == "coroutine":
+        assert inspect.getcoroutinestate(result) == inspect.CORO_CLOSED
+    elif kind == "generator":
+        assert inspect.getgeneratorstate(result) == inspect.GEN_CLOSED
+    elif kind == "async_generator":
+        if hasattr(inspect, "getasyncgenstate"):
+            assert inspect.getasyncgenstate(result) == inspect.AGEN_CLOSED
+        else:
+            assert result.ag_frame is not None
+    elif kind == "future":
+        assert not result.cancelled() and not result.done()
+    del result
+    gc.collect()
+    assert not recwarn.list
+
+
+@pytest.mark.parametrize("result", [None, 0, 42])
+def test_only_synchronous_completion_results_are_valid(result):
+    validate_document_index_result(result)
+
+
+@pytest.mark.parametrize("result", [True, False, -1, 1.0, "1", [], object()])
+def test_unknown_or_invalid_completion_results_are_rejected(result):
+    with pytest.raises(TypeError, match="return None or a non-negative int"):
+        validate_document_index_result(result)
+
+
+def test_suspended_generator_is_not_closed_by_validation():
+    entered = []
+
+    def work():
+        try:
+            yield
+        finally:
+            entered.append("finally")
+
+    result = work()
+    next(result)
+    try:
+        with pytest.raises(TypeError, match="synchronous completion"):
+            validate_document_index_result(result)
+        assert entered == []
+        assert inspect.getgeneratorstate(result) == inspect.GEN_SUSPENDED
+    finally:
+        result.close()
+    assert entered == ["finally"]
+
+
+def test_async_generator_without_state_inspection_is_rejected_without_driving_it(monkeypatch):
+    monkeypatch.delattr(inspect, "getasyncgenstate", raising=False)
+    entered = []
+    result = deferred_result("async_generator", entered)
+    try:
+        with pytest.raises(TypeError, match="synchronous completion"):
+            validate_document_index_result(result)
+        assert result.ag_frame is not None and entered == []
+    finally:
+        # The test owns this known-unstarted object; production must not guess.
+        with pytest.raises(StopIteration):
+            result.aclose().send(None)
+    assert entered == []

@@ -60,6 +60,7 @@ APPLY_ERROR_LABELS = {
     "verification_failed": "Die Nachprüfung des Schreibvorgangs ist fehlgeschlagen (verification_failed).",
 }
 INDEX_ERROR_LABELS = {
+    "index_callback_contract": "Der Indexer hat die synchrone Verarbeitung nicht bestätigt (index_callback_contract).",
     "applied_source_changed": "Die angewandte Datei wurde vor der Indexierung geändert (applied_source_changed).",
     "index_operation_failed": "Die dokumentbezogene Indexierung ist fehlgeschlagen (index_operation_failed).",
 }
