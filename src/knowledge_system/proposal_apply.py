@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from functools import partial
 from uuid import UUID, uuid4
 
 from .client_state import ClientIdentity
 from .config import Settings
 from .db import connect
 from .index_coordination import lock_document_index
-from .indexer import index_document
+from .indexer import (
+    DocumentIndexCoordination,
+    DocumentIndexer,
+    index_document,
+    validate_document_indexer,
+)
 from .knowledge_apply import (
     KnowledgeConflict,
     KnowledgeIOFailure,
@@ -269,8 +274,9 @@ class PostgresApplyStore:
         identity: ClientIdentity,
         proposal_id: UUID,
         source: GitMarkdownSource,
-        index: Callable[[SourceDocument], object],
+        index: DocumentIndexer,
     ) -> ApplyView:
+        validate_document_indexer(index)
         self._begin_index_attempt(identity, proposal_id)
         with self._connect(self.settings) as conn, conn.transaction():
             view = self.reviews._view(conn, identity, proposal_id)
@@ -291,7 +297,8 @@ class PostgresApplyStore:
                 index(
                     SourceDocument(
                         apply.target_source_id, normalized, current, {"path": normalized}
-                    )
+                    ),
+                    coordination=DocumentIndexCoordination.LOCKS_HELD,
                 )
             except KnowledgeConflict as exc:
                 conn.execute(
@@ -379,15 +386,14 @@ class ProposalApplyService:
         store: PostgresApplyStore | None = None,
         source: GitMarkdownSource | None = None,
         writer: SecureKnowledgeWriter | None = None,
-        document_indexer: Callable[[SourceDocument], object] | None = None,
+        document_indexer: DocumentIndexer | None = None,
     ) -> None:
         self.settings = settings
         self.store = store or PostgresApplyStore(settings)
         self.source = source or GitMarkdownSource(settings.knowledge_root)
         self.writer = writer or SecureKnowledgeWriter(settings.knowledge_root)
-        self.document_indexer = document_indexer or (
-            lambda document: index_document(settings, document, coordinated=True)
-        )
+        self.document_indexer = document_indexer or partial(index_document, settings)
+        validate_document_indexer(self.document_indexer)
 
     def get(self, identity: ClientIdentity, proposal_id: UUID) -> ApplyView:
         return self.store.get(identity, proposal_id)

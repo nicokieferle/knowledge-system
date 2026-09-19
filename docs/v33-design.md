@@ -99,22 +99,28 @@ make the actual state explicit:
 | after index commit, before status confirmation | complete new chunks, status pending | repeat document replacement and confirm |
 
 A target already containing the exact new bytes is accepted only for this apply row's exact
-bound revision. Before that retry can succeed, it opens and `fsync`s the exact regular target,
-`fsync`s the pinned parent directory, revalidates the parent chain and securely rereads the
-bytes. Persistent synchronization failure therefore remains failed; a transient failure can be
-healed by an explicit retry. An old/absent target proceeds. Every other state is a conflict and
-is never overwritten. Apply failures never trigger indexing. Index failures never roll back or
-hide the applied file.
+bound revision. Before that retry can succeed, it keeps the safely opened target descriptor
+alive while it verifies and `fsync`s that inode, `fsync`s the pinned parent directory, and then
+compares the descriptor-relative target entry with the same descriptor again. Device, inode,
+type, link count, permissions/ownership, size and change metadata plus exact accepted bytes must
+remain stable; parent metadata also detects a rename-away-and-back during the protocol.
+Persistent synchronization failure therefore remains failed, a transient failure can be healed
+by an explicit retry, and identical bytes on an exchanged unsynchronized inode are a conflict.
+An old/absent target proceeds. Every other state is a conflict and is never overwritten. Apply
+failures never trigger indexing. Index failures never roll back or hide the applied file.
 
 ## Concurrency and indexing
 
 The PostgreSQL lock order is proposal/apply row, shared global index lock, then document lock.
 The document identity reuses the validated portable source/path namespace and casefolds its
-ASCII-only path components, so aliases such as `note.md` and `Note.md` serialize without globally
-serializing unrelated documents. Concurrent identical submits create one decision, intent, file
-result and index operation. Two proposals based on the same old file or portable case alias
-serialize; one writes and the other observes a conflict. Refresh during an apply waits for the
-row and cannot replace a successful result.
+ASCII-only path components, so aliases such as `note.md` and `Note.md` serialize. Its PostgreSQL
+key uses a length-framed, deterministic BLAKE2 identity in a document-only 64-bit domain; the
+global key occupies a disjoint domain. Documents retain 62 digest bits, so theoretical document
+collisions remain possible but the former practical 32-bit `hashtext` collision is removed.
+Concurrent identical submits create one decision, intent, file result and index operation. Two
+proposals based on the same old file or portable case alias serialize; one writes and the other
+observes a conflict. Refresh during an apply waits for the row and cannot replace a successful
+result.
 
 A full index takes the exclusive form of the global PostgreSQL advisory lock before source
 discovery, filesystem reads, chunk/delta calculation and database replacement. Apply and
@@ -126,8 +132,10 @@ After apply, the source is securely reread and its hash must still equal the bou
 `index_document` chunks exactly those bytes, computes embeddings, and deletes/reinserts only
 that `(source_id, source_path)` in one PostgreSQL transaction. The unique source/path/ordinal
 index prevents duplicates. The low-level document function can also acquire the shared/document
-locks for standalone replacement; apply passes an already coordinated snapshot. No global
-production reindex is started.
+locks for standalone replacement; apply passes an already coordinated snapshot. Every call must
+provide the typed coordination state, and every injected callback must accept that keyword.
+Incompatible legacy one-argument callbacks are rejected before an index attempt rather than
+reacquiring the held lock on another connection. No global production reindex is started.
 
 ## Browser and client boundary
 

@@ -6,7 +6,11 @@ from typing import Any
 
 from knowledge_system.chunking import chunk_markdown_text
 from knowledge_system.config import Settings
-from knowledge_system.indexer import index_document, index_knowledge
+from knowledge_system.indexer import (
+    DocumentIndexCoordination,
+    index_document,
+    index_knowledge,
+)
 from knowledge_system.sources import SourceDocument
 
 
@@ -116,7 +120,11 @@ def test_document_index_replaces_only_one_path_in_one_transaction() -> None:
         {"path": "economics/test.md"},
     )
     count = index_document(
-        _settings(), document, embedder=FakeEmbedder(), connection_factory=factory
+        _settings(),
+        document,
+        coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
+        embedder=FakeEmbedder(),
+        connection_factory=factory,
     )
 
     assert count == 2

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import inspect
+from enum import StrEnum
+from typing import Protocol
+
 from pgvector import Vector
 
 from .chunking import Chunk, chunk_markdown_text
@@ -11,19 +15,52 @@ from .sources import GitMarkdownSource, SourceAdapter, SourceDocument
 ExistingChunkState = tuple[str, str]
 
 
+class DocumentIndexCoordination(StrEnum):
+    """Explicit lock state required by every document-index call."""
+
+    ACQUIRE_LOCKS = "acquire_locks"
+    LOCKS_HELD = "locks_held"
+
+
+class DocumentIndexer(Protocol):
+    def __call__(
+        self,
+        document: SourceDocument,
+        *,
+        coordination: DocumentIndexCoordination,
+    ) -> object: ...
+
+
+def validate_document_indexer(index: object) -> None:
+    """Reject the obsolete one-argument callback contract before any apply work."""
+
+    try:
+        inspect.signature(index).bind(object(), coordination=DocumentIndexCoordination.LOCKS_HELD)
+    except (TypeError, ValueError):
+        raise TypeError(
+            "document_indexer must accept document and keyword-only coordination"
+        ) from None
+
+
 def index_document(
     settings: Settings,
     document: SourceDocument,
     *,
+    coordination: DocumentIndexCoordination,
     embedder=None,
     connection_factory=connect,
-    coordinated: bool = False,
 ) -> int:
     """Atomically replace one document's chunks; safe to repeat.
 
-    ``coordinated=True`` is reserved for callers already holding the shared
-    global and canonical document locks before they read the source snapshot.
+    ``LOCKS_HELD`` is reserved for callers already holding the shared global
+    and canonical document locks before they read the source snapshot. Making
+    this state mandatory prevents an injected standard indexer from silently
+    reacquiring its own lock on a second connection.
     """
+    if coordination is not DocumentIndexCoordination.ACQUIRE_LOCKS and (
+        coordination is not DocumentIndexCoordination.LOCKS_HELD
+    ):
+        raise ValueError("Invalid document-index coordination state")
     chunks = chunk_markdown_text(document.content, document.source_path)
     if embedder is None and chunks:
         from .embedder import LocalEmbedder
@@ -33,7 +70,7 @@ def index_document(
     if len(vectors) != len(chunks):
         raise RuntimeError("Embedding result count mismatch")
     with connection_factory(settings) as conn, conn.transaction():
-        if not coordinated:
+        if coordination is DocumentIndexCoordination.ACQUIRE_LOCKS:
             lock_document_index(conn, document.source_id, document.source_path)
         # Delete and insert share one PostgreSQL transaction: readers observe the
         # complete old document or the complete new document, never a mixture.

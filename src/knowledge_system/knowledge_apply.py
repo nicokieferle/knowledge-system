@@ -273,18 +273,47 @@ class SecureKnowledgeWriter:
             raise KnowledgeConflict("target_changed") from None
         try:
             before = os.fstat(fd)
-            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REVIEW_BYTES:
-                raise KnowledgeConflict("target_invalid")
-            self._validate_owned_mode(before)
+            self._validate_retry_target(before)
+            identity = self._durability_identity(before)
+            if self._read_open_file(fd) != expected:
+                raise KnowledgeConflict("target_changed")
+            if self._durability_identity(os.fstat(fd)) != identity:
+                raise KnowledgeConflict("target_changed")
+
             os.fsync(fd)
-            after = os.fstat(fd)
+            if self._durability_identity(os.fstat(fd)) != identity:
+                raise KnowledgeConflict("target_changed")
+
+            # The directory metadata guard also detects an ABA rename away and
+            # back around the parent fsync. The target descriptor remains open
+            # until all post-fsync identity and byte checks have completed.
+            directory_identity = self._durability_identity(os.fstat(directory))
+            os.fsync(directory)
+            self.fault("after_directory_fsync")
+            verify_directory()
+
+            try:
+                path_before = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except OSError:
+                raise KnowledgeConflict("target_changed") from None
+            self._validate_retry_target(path_before)
+            if self._durability_identity(path_before) != identity:
+                raise KnowledgeConflict("target_changed")
+
+            verified = self._read_open_file(fd)
+            descriptor_after = os.fstat(fd)
             try:
                 path_after = os.stat(name, dir_fd=directory, follow_symlinks=False)
             except OSError:
                 raise KnowledgeConflict("target_changed") from None
-            if _stable_file_metadata(before) != _stable_file_metadata(
-                after
-            ) or _stable_file_metadata(before) != _stable_file_metadata(path_after):
+            self._validate_retry_target(descriptor_after)
+            self._validate_retry_target(path_after)
+            if (
+                verified != expected
+                or self._durability_identity(descriptor_after) != identity
+                or self._durability_identity(path_after) != identity
+                or self._durability_identity(os.fstat(directory)) != directory_identity
+            ):
                 raise KnowledgeConflict("target_changed")
         except KnowledgeApplyError:
             raise
@@ -293,17 +322,37 @@ class SecureKnowledgeWriter:
         finally:
             os.close(fd)
 
-        try:
-            os.fsync(directory)
-            self.fault("after_directory_fsync")
-        except KnowledgeApplyError:
-            raise
-        except OSError:
-            raise KnowledgeIOFailure("filesystem_error") from None
-        verify_directory()
-        verified, _, _ = self._read_current(directory, name)
-        if verified != expected:
-            raise KnowledgeIOFailure("verification_failed")
+    @staticmethod
+    def _durability_identity(info: os.stat_result) -> tuple[int, ...]:
+        """Bind retry durability to one unchanged inode and its safety properties."""
+
+        return (
+            info.st_dev,
+            info.st_ino,
+            info.st_mode,
+            info.st_nlink,
+            info.st_uid,
+            info.st_gid,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _read_open_file(fd: int) -> bytes:
+        os.lseek(fd, 0, os.SEEK_SET)
+        data = bytearray()
+        while len(data) <= MAX_REVIEW_BYTES:
+            chunk = os.read(fd, min(64 * 1024, MAX_REVIEW_BYTES + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        return bytes(data)
+
+    def _validate_retry_target(self, info: os.stat_result) -> None:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink < 1 or info.st_size > MAX_REVIEW_BYTES:
+            raise KnowledgeConflict("target_invalid")
+        self._validate_owned_mode(info)
 
     def _read_current(
         self, directory: int, name: str

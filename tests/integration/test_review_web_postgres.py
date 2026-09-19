@@ -28,7 +28,7 @@ def database(tmp_path):
 
 
 def application(settings):
-    return ProposalApplyService(settings, document_indexer=lambda document: None)
+    return ProposalApplyService(settings, document_indexer=lambda document, *, coordination: None)
 
 
 class FakeEmbedder:
@@ -37,8 +37,8 @@ class FakeEmbedder:
 
 
 def real_document_indexer(settings):
-    return lambda document: index_document(
-        settings, document, embedder=FakeEmbedder(), coordinated=True
+    return lambda document, *, coordination: index_document(
+        settings, document, coordination=coordination, embedder=FakeEmbedder()
     )
 
 
@@ -214,7 +214,7 @@ def test_browser_legacy_apply_and_index_retry_show_real_states(database):
         other_who, other.id, target_source_path="other.md"
     ).revision
 
-    def fail_index(_document):
+    def fail_index(_document, *, coordination):
         raise RuntimeError("private failure detail")
 
     failing_apply = ProposalApplyService(database, document_indexer=fail_index)
@@ -236,7 +236,7 @@ def test_browser_legacy_apply_and_index_retry_show_real_states(database):
         page = client.get(path)
         assert "index_operation_failed" in page.text and "Retry indexing" in page.text
         assert "private failure detail" not in page.text
-        failing_apply.document_indexer = lambda document: None
+        failing_apply.document_indexer = lambda document, *, coordination: None
         retried = client.post(path + "/retry-index", data={"csrf": token}, follow_redirects=False)
         assert retried.status_code == 303
         assert "<dd>indexed</dd>" in client.get(path).text
@@ -255,8 +255,13 @@ def test_browser_recovers_pending_index_through_authenticated_csrf_post(
 
     if after_index_commit:
 
-        def committed_then_process_loss(document):
-            index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
+        def committed_then_process_loss(document, *, coordination):
+            index_document(
+                database,
+                document,
+                coordination=coordination,
+                embedder=FakeEmbedder(),
+            )
             raise SimulatedProcessLoss()
 
         with pytest.raises(SimulatedProcessLoss):
@@ -297,7 +302,11 @@ def test_browser_pending_index_retry_rejects_unapplied_and_foreign_owner(databas
     revision = reviews.prepare(who, proposal.id).revision
     store = PostgresApplyStore(database)
     store.accept_and_intent(who, proposal.id, revision.id, "pending")
-    apply_service = ProposalApplyService(database, store=store, document_indexer=lambda _: None)
+    apply_service = ProposalApplyService(
+        database,
+        store=store,
+        document_indexer=lambda _document, *, coordination: None,
+    )
 
     with TestClient(
         create_app(replace(web_settings(), owner=who), reviews, apply_service)

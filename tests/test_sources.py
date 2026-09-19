@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
+from knowledge_system.index_coordination import (
+    GLOBAL_INDEX_LOCK_KEY,
+    document_lock_key,
+)
 from knowledge_system.proposal_review import InvalidTarget
 from knowledge_system.sources import (
     GitMarkdownSource,
@@ -71,3 +77,28 @@ def test_portable_lock_identity_uses_the_validated_case_namespace() -> None:
     )
     with pytest.raises(InvalidTarget):
         portable_source_lock_identity("knowledge-git", "nöté.md")
+
+
+def test_document_lock_keys_are_stable_casefolded_and_domain_separated() -> None:
+    first = document_lock_key("knowledge-git", "p3059.md")
+    former_collision = document_lock_key("knowledge-git", "p98538.md")
+    alias = document_lock_key("knowledge-git", "Folder/Note.md")
+
+    assert first != former_collision
+    assert alias == document_lock_key("knowledge-git", "folder/note.md")
+    assert first < 0 and former_collision < 0 and alias < 0
+    assert GLOBAL_INDEX_LOCK_KEY > 0
+    output = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from knowledge_system.index_coordination import document_lock_key; "
+                "print(document_lock_key('knowledge-git', 'p3059.md'))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert int(output) == first

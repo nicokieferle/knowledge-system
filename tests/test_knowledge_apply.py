@@ -234,6 +234,55 @@ def test_persistent_directory_fsync_error_keeps_retry_failed(tmp_path, monkeypat
 
 
 @pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")
+@pytest.mark.parametrize("old", [None, "old\n"])
+@pytest.mark.parametrize("replacement_bytes", [b"accepted\n", b"different\n"])
+def test_exact_new_retry_rejects_inode_exchange_during_parent_fsync(
+    tmp_path, monkeypatch, old, replacement_bytes
+):
+    target = tmp_path / "notes.md"
+    if old is not None:
+        target.write_text(old, encoding="utf-8")
+    item = revision("notes.md", old, "accepted\n")
+    apply_id = uuid4()
+    real_fsync = os.fsync
+
+    def fail_first_parent(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError()
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_first_parent)
+    with pytest.raises(KnowledgeIOFailure, match="filesystem_error"):
+        SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
+    assert target.read_bytes() == b"accepted\n"
+
+    synced_inodes = set()
+    replacement_inode = None
+
+    def exchange_on_parent_fsync(fd):
+        nonlocal replacement_inode
+        info = os.fstat(fd)
+        if stat.S_ISREG(info.st_mode):
+            synced_inodes.add((info.st_dev, info.st_ino))
+        elif replacement_inode is None:
+            replacement = tmp_path / ".replacement"
+            replacement.write_bytes(replacement_bytes)
+            replacement.chmod(stat.S_IMODE(target.stat().st_mode))
+            os.replace(replacement, target)
+            final = target.stat()
+            replacement_inode = (final.st_dev, final.st_ino)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", exchange_on_parent_fsync)
+    with pytest.raises(KnowledgeConflict, match="target_changed"):
+        SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
+
+    assert replacement_inode is not None
+    assert replacement_inode not in synced_inodes
+    assert target.read_bytes() == replacement_bytes
+
+
+@pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")
 def test_changed_bytes_symlink_parent_case_alias_and_missing_parent_are_conflicts(tmp_path):
     item = revision("folder/notes.md", "old\n", "new\n")
     with pytest.raises(KnowledgeConflict):

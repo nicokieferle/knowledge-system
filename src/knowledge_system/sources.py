@@ -51,8 +51,15 @@ def portable_source_lock_identity(source_id: str, source_path: str) -> str:
     normalization policy.
     """
 
+    canonical_source, canonical_path = portable_source_lock_components(source_id, source_path)
+    return canonical_source + ":" + canonical_path
+
+
+def portable_source_lock_components(source_id: str, source_path: str) -> tuple[str, str]:
+    """Return the validated, case-insensitive source/path lock components."""
+
     parts = validate_source_target(source_id, source_path)
-    return source_id + ":" + "/".join(part.casefold() for part in parts)
+    return source_id, "/".join(part.casefold() for part in parts)
 
 
 def _stable_file_metadata(value: os.stat_result) -> tuple[int, int, int, int, int, int]:

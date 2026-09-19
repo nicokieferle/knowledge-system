@@ -17,7 +17,7 @@ independent filesystem backup remain operator prerequisites and were not execute
 ## Local environment and commands
 
 The final local gate used Python 3.13, rootless Docker, PostgreSQL 17.11 and pgvector 0.8.6.
-It completed 393 unit/HTTP tests and 64 real PostgreSQL integration tests, with no failures
+It completed 398 unit/HTTP tests and 71 real PostgreSQL integration tests, with no failures
 or skips in either separately executed group. The only warning was the upstream Starlette
 `BlockingPortal` deprecation noted below. The final rootless BuildKit image build and the
 built-image database smoke test also succeeded; the smoke test reported
@@ -76,6 +76,9 @@ apply snapshots, case aliases share one document lock, conflict successors retai
 human target/content, browser recovery accepts both pending and failed index states, and
 `applied` rows require a non-NULL matching hash. The local counts above come from the completed
 validation artifacts; each pushed head is additionally accepted by the repository workflow.
+The follow-up review's replacement-inode race, injected-indexer self-block and confirmed 32-bit
+document-lock collision were likewise reproduced against `dba1660249181e3a2a71456f30b10e955ee12ee9`
+before the descriptor binding, explicit coordination contract and 64-bit lock-domain changes.
 
 ### Domain, schema and durable state
 
@@ -107,6 +110,10 @@ validation artifacts; each pushed head is additionally accepted by the repositor
   `fsync` boundary, exact-new idempotency and apply-specific orphan cleanup.
 - Create and update retries after the rename repeat target-file and parent-directory `fsync`;
   persistent failure remains nonterminal and a later successful retry heals it.
+- Exact-new retries keep the synchronized target descriptor open through parent `fsync` and
+  final descriptor-relative identity checks. Deterministic create/update tests exchange a new,
+  unsynchronized inode during parent `fsync`; matching and different replacement bytes both
+  remain non-applied.
 - A third target state survives; tests never write the repository's real `knowledge/`.
 
 ### Concurrency, crash recovery and indexing
@@ -115,6 +122,8 @@ validation artifacts; each pushed head is additionally accepted by the repositor
   call. Two accepted proposals for one base file serialize to one applied/one conflict result.
 - Both deterministic start orders for `note.md`/`Note.md` yield exactly one file and one conflict.
   The lock identity is the casefolded form of the existing validated portable path namespace.
+  Stable length-framed 62-bit document digests occupy a domain disjoint from the global lock;
+  the former `p3059.md`/`p98538.md` 32-bit collision no longer blocks across connections.
 - Full indexing holds an exclusive global advisory lock from before discovery through its index
   commit. Apply/document indexing take the shared global lock before the canonical path lock;
   controlled two-document interleaving finishes without mixed revisions, false `indexed`, or
@@ -127,6 +136,9 @@ validation artifacts; each pushed head is additionally accepted by the repositor
   confirmation is replaced idempotently on retry with no duplicate chunks.
 - Document replacement deletes/inserts only one source/path in one PostgreSQL transaction. A
   real injected SQL error after deletion rolls back to the complete old chunk set.
+- The public document indexer requires an explicit acquire-locks/already-held state. The standard
+  indexer can be injected directly without self-blocking, while obsolete one-argument callbacks
+  are rejected before attempts or journal changes.
 - Index failure keeps the applied file, stores only a controlled class and succeeds through the
   separate retry.
 

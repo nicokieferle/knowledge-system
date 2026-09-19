@@ -8,6 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from functools import partial
 from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
@@ -17,7 +18,15 @@ import pytest
 from knowledge_system.apply_schema import APPLY_SCHEMA
 from knowledge_system.client_state import ClientIdentity
 from knowledge_system.db import init_db
-from knowledge_system.indexer import index_document, index_knowledge
+from knowledge_system.index_coordination import (
+    GLOBAL_INDEX_LOCK_KEY,
+    document_lock_key,
+)
+from knowledge_system.indexer import (
+    DocumentIndexCoordination,
+    index_document,
+    index_knowledge,
+)
 from knowledge_system.knowledge_apply import SecureKnowledgeWriter
 from knowledge_system.proposal_apply import PostgresApplyStore, ProposalApplyService
 from knowledge_system.proposal_review import InvalidTransition, ProposalStatus, ReviewForbidden
@@ -42,9 +51,7 @@ def initialize(settings):
 
 
 def document_indexer(settings):
-    return lambda document: index_document(
-        settings, document, embedder=FakeEmbedder(), coordinated=True
-    )
+    return partial(index_document, settings, embedder=FakeEmbedder())
 
 
 def initial_v33_schema():
@@ -249,11 +256,16 @@ def test_accept_apply_writes_exactly_once_and_indexes_idempotently(database):
     calls = 0
     lock = Lock()
 
-    def index(document):
+    def index(document, *, coordination):
         nonlocal calls
         with lock:
             calls += 1
-        return index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
+        return index_document(
+            database,
+            document,
+            coordination=coordination,
+            embedder=FakeEmbedder(),
+        )
 
     service = ProposalApplyService(database, document_indexer=index)
     start = Barrier(2)
@@ -276,6 +288,80 @@ def test_accept_apply_writes_exactly_once_and_indexes_idempotently(database):
             conn.execute("SELECT count(*) FROM chunks WHERE source_path='new.md'").fetchone()[0]
             == 1
         )
+
+
+def test_public_document_indexer_di_receives_held_lock_state(database):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    script = r"""
+import sys
+from functools import partial
+from pathlib import Path
+from uuid import UUID
+from knowledge_system.client_state import ClientIdentity
+from knowledge_system.config import Settings
+from knowledge_system.indexer import index_document
+from knowledge_system.proposal_apply import ProposalApplyService
+
+class Embedder:
+    def encode(self, values):
+        return [[float(index + 1)] * 384 for index, _ in enumerate(values)]
+
+settings = Settings(sys.argv[1], Path(sys.argv[2]), "unused", 384)
+service = ProposalApplyService(
+    settings,
+    document_indexer=partial(index_document, settings, embedder=Embedder()),
+)
+result = service.accept_and_apply(
+    ClientIdentity("test", "chat", "user"), UUID(sys.argv[3]), UUID(sys.argv[4]), "pending"
+)
+print(result.apply.apply_status, result.apply.index_status)
+"""
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            database.database_url,
+            str(database.knowledge_root),
+            str(proposal.id),
+            str(revision.id),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.stdout.rstrip().endswith("applied indexed")
+    with psycopg.connect(database.database_url) as conn:
+        assert (
+            conn.execute("SELECT count(*) FROM chunks WHERE source_path='new.md'").fetchone()[0]
+            == 1
+        )
+
+
+def test_incompatible_document_indexer_is_rejected_before_attempt(database):
+    initialize(database)
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        ProposalApplyService(database, document_indexer=lambda document: None)
+
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    store = PostgresApplyStore(database)
+    store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
+
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        store.execute_index(
+            who,
+            proposal.id,
+            GitMarkdownSource(database.knowledge_root),
+            lambda document: None,
+        )
+    current = store.get(who, proposal.id).apply
+    assert current.index_status == "pending"
+    assert current.index_attempts == 0
 
 
 def test_two_proposals_for_same_base_have_one_write_and_one_conflict(database):
@@ -398,6 +484,56 @@ def test_apply_journal_stays_failed_until_retry_resynchronizes(database, monkeyp
     assert healed.apply_attempts == 3
 
 
+@pytest.mark.parametrize("old", [None, "old\n"])
+@pytest.mark.parametrize("replacement_bytes", [b"new\n", b"different\n"])
+def test_retry_inode_exchange_never_records_applied(database, monkeypatch, old, replacement_bytes):
+    initialize(database)
+    target = database.knowledge_root / "new.md"
+    if old is not None:
+        target.write_text(old, encoding="utf-8")
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database)
+    real_fsync = os.fsync
+
+    def fail_first_parent(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError()
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_first_parent)
+    first = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    assert first.apply.apply_status == "failed"
+    assert target.read_bytes() == b"new\n"
+
+    synced_inodes = set()
+    replacement_inode = None
+
+    def exchange_on_parent_fsync(fd):
+        nonlocal replacement_inode
+        info = os.fstat(fd)
+        if stat.S_ISREG(info.st_mode):
+            synced_inodes.add((info.st_dev, info.st_ino))
+        elif replacement_inode is None:
+            replacement = database.knowledge_root / ".replacement"
+            replacement.write_bytes(replacement_bytes)
+            replacement.chmod(stat.S_IMODE(target.stat().st_mode))
+            os.replace(replacement, target)
+            final = target.stat()
+            replacement_inode = (final.st_dev, final.st_ino)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", exchange_on_parent_fsync)
+    retry = service.retry_apply(who, proposal.id)
+    assert retry.apply.apply_status == "conflict"
+    assert retry.apply.actual_hash is None
+    assert retry.apply.index_status == "pending"
+    assert replacement_inode is not None
+    assert replacement_inode not in synced_inodes
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
+
+
 def test_index_failure_keeps_applied_file_and_retry_replaces_chunks(database):
     initialize(database)
     reviews, who, proposal = seed(database)
@@ -407,8 +543,13 @@ def test_index_failure_keeps_applied_file_and_retry_replaces_chunks(database):
     applied = store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
     assert applied.apply.apply_status == "applied"
 
-    def committed_then_lost_confirmation(document):
-        index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
+    def committed_then_lost_confirmation(document, *, coordination):
+        index_document(
+            database,
+            document,
+            coordination=coordination,
+            embedder=FakeEmbedder(),
+        )
         raise RuntimeError("private details must not be stored")
 
     failed = store.execute_index(
@@ -443,7 +584,7 @@ def test_conflict_and_reject_defer_never_write_or_index(database):
     (database.knowledge_root / "new.md").write_text("third\n", encoding="utf-8")
     called = False
 
-    def forbidden_index(_document):
+    def forbidden_index(_document, *, coordination):
         nonlocal called
         called = True
 
@@ -586,8 +727,13 @@ def test_index_commit_before_status_crash_is_idempotently_confirmed(database):
     store.accept_and_intent(who, proposal.id, revision.id, "pending")
     store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
 
-    def committed_then_process_loss(document):
-        index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
+    def committed_then_process_loss(document, *, coordination):
+        index_document(
+            database,
+            document,
+            coordination=coordination,
+            embedder=FakeEmbedder(),
+        )
         raise SimulatedProcessLoss()
 
     with pytest.raises(SimulatedProcessLoss):
@@ -619,7 +765,12 @@ def test_document_replace_rolls_back_on_real_postgres_error(database):
     path = database.knowledge_root / "atomic.md"
     path.write_text("# Old\n\nOld body.", encoding="utf-8")
     old = source.get_document("atomic.md")
-    index_document(database, old, embedder=FakeEmbedder())
+    index_document(
+        database,
+        old,
+        coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
+        embedder=FakeEmbedder(),
+    )
 
     class InjectingConnection:
         def __init__(self, conn):
@@ -646,6 +797,7 @@ def test_document_replace_rolls_back_on_real_postgres_error(database):
         index_document(
             database,
             changed,
+            coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
             embedder=FakeEmbedder(),
             connection_factory=failing_factory,
         )
@@ -719,6 +871,24 @@ def test_parallel_case_alias_creates_exactly_one_file(
     assert [path.name for path in database.knowledge_root.iterdir()] == [first_path]
 
 
+def test_former_hashtext_collision_paths_take_independent_document_locks(database):
+    initialize(database)
+    first = document_lock_key("knowledge-git", "p3059.md")
+    second = document_lock_key("knowledge-git", "p98538.md")
+    assert first != second
+
+    with (
+        psycopg.connect(database.database_url) as first_conn,
+        psycopg.connect(database.database_url) as second_conn,
+    ):
+        first_conn.execute("SELECT pg_advisory_xact_lock_shared(%s)", (GLOBAL_INDEX_LOCK_KEY,))
+        first_conn.execute("SELECT pg_advisory_xact_lock(%s)", (first,))
+        assert second_conn.execute(
+            "SELECT pg_try_advisory_xact_lock_shared(%s)", (GLOBAL_INDEX_LOCK_KEY,)
+        ).fetchone()[0]
+        assert second_conn.execute("SELECT pg_try_advisory_xact_lock(%s)", (second,)).fetchone()[0]
+
+
 def test_full_index_and_parallel_applies_use_one_consistent_lock_order(database, monkeypatch):
     initialize(database)
     contents = {
@@ -728,7 +898,12 @@ def test_full_index_and_parallel_applies_use_one_consistent_lock_order(database,
     source = GitMarkdownSource(database.knowledge_root)
     for path, (old, _) in contents.items():
         (database.knowledge_root / path).write_text(old, encoding="utf-8")
-        index_document(database, source.get_document(path), embedder=FakeEmbedder())
+        index_document(
+            database,
+            source.get_document(path),
+            coordination=DocumentIndexCoordination.ACQUIRE_LOCKS,
+            embedder=FakeEmbedder(),
+        )
 
     jobs = []
     store = PostgresApplyStore(database)
