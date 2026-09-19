@@ -163,6 +163,7 @@ class SecureKnowledgeWriter:
         current, metadata, mode = self._read_current(directory, name)
         if current == expected:
             self._cleanup_temps(directory, prefix)
+            self._sync_existing(directory, name, expected, verify_directory)
             return AppliedDocument(
                 content.target_source_id,
                 content.target_source_path,
@@ -256,6 +257,53 @@ class SecureKnowledgeWriter:
                     os.unlink(temp, dir_fd=directory)
                 except FileNotFoundError:
                     pass
+
+    def _sync_existing(
+        self,
+        directory: int,
+        name: str,
+        expected: bytes,
+        verify_directory: Callable[[], None],
+    ) -> None:
+        """Complete file and directory durability after an uncertain prior rename."""
+
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        except OSError:
+            raise KnowledgeConflict("target_changed") from None
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > MAX_REVIEW_BYTES:
+                raise KnowledgeConflict("target_invalid")
+            self._validate_owned_mode(before)
+            os.fsync(fd)
+            after = os.fstat(fd)
+            try:
+                path_after = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except OSError:
+                raise KnowledgeConflict("target_changed") from None
+            if _stable_file_metadata(before) != _stable_file_metadata(
+                after
+            ) or _stable_file_metadata(before) != _stable_file_metadata(path_after):
+                raise KnowledgeConflict("target_changed")
+        except KnowledgeApplyError:
+            raise
+        except OSError:
+            raise KnowledgeIOFailure("filesystem_error") from None
+        finally:
+            os.close(fd)
+
+        try:
+            os.fsync(directory)
+            self.fault("after_directory_fsync")
+        except KnowledgeApplyError:
+            raise
+        except OSError:
+            raise KnowledgeIOFailure("filesystem_error") from None
+        verify_directory()
+        verified, _, _ = self._read_current(directory, name)
+        if verified != expected:
+            raise KnowledgeIOFailure("verification_failed")
 
     def _read_current(
         self, directory: int, name: str

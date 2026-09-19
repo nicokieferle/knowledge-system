@@ -206,6 +206,8 @@ durable_integrity_expression() {
       OR a.expected_old_hash IS DISTINCT FROM r.old_hash
       OR a.expected_new_hash IS DISTINCT FROM r.new_hash
       OR a.expected_absent IS DISTINCT FROM (r.change_kind = 'create')
+      OR (a.apply_status = 'applied'
+          AND (a.actual_hash IS NULL OR a.actual_hash IS DISTINCT FROM a.expected_new_hash))
       OR (a.refresh_proposal_id IS NOT NULL
           AND (refresh.id IS NULL OR refresh.conversation_id IS DISTINCT FROM p.conversation_id)))
 SQL

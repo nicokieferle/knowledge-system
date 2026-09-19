@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 from .client_state import ClientIdentity
 from .config import Settings
 from .db import connect
+from .index_coordination import lock_document_index
 from .indexer import index_document
 from .knowledge_apply import (
     KnowledgeConflict,
@@ -231,10 +232,10 @@ class PostgresApplyStore:
                 return self._result(conn, identity, proposal_id)
             if apply.refresh_proposal_id is not None:
                 raise InvalidTransition()
-            conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 330033))",
-                (apply.target_source_id + ":" + apply.target_source_path,),
-            )
+            # Row lock -> shared full-index lock -> canonical document lock.
+            # Every apply/index path uses this order; full indexing takes only
+            # the exclusive global lock before reading its source snapshot.
+            lock_document_index(conn, apply.target_source_id, apply.target_source_path)
             try:
                 result = writer.apply(apply.id, view.revision)
             except KnowledgeConflict as exc:
@@ -280,10 +281,7 @@ class PostgresApplyStore:
                 raise InvalidTransition()
             if apply.index_status == IndexStatus.INDEXED:
                 return self._result(conn, identity, proposal_id)
-            conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 330033))",
-                (apply.target_source_id + ":" + apply.target_source_path,),
-            )
+            lock_document_index(conn, apply.target_source_id, apply.target_source_path)
             try:
                 normalized, current = source.snapshot(
                     apply.target_source_id, apply.target_source_path
@@ -358,12 +356,14 @@ class PostgresApplyStore:
                  trigger_message_id, originating_message_ids, target_source_id,
                  target_source_path, title, summary, reason, proposed_content,
                  base_revision, source_suggestion_id)
-                SELECT %s, conversation_id, 'pending', source_client, trigger_type,
-                       %s, originating_message_ids, target_source_id,
-                       target_source_path, title, summary, reason, proposed_content,
-                       base_revision, NULL
-                  FROM proposals WHERE id=%s""",
-                (replacement, trigger_message_id, proposal_id),
+                SELECT %s, p.conversation_id, 'pending', p.source_client, p.trigger_type,
+                       %s, p.originating_message_ids, r.target_source_id,
+                       r.target_source_path, p.title, p.summary, p.reason, r.new_content,
+                       r.base_revision, NULL
+                  FROM proposals p
+                  JOIN proposal_reviews r ON r.proposal_id=p.id AND r.id=%s
+                 WHERE p.id=%s""",
+                (replacement, trigger_message_id, apply.review_id, proposal_id),
             )
             conn.execute(
                 "UPDATE proposal_applies SET refresh_proposal_id=%s WHERE id=%s",
@@ -386,7 +386,7 @@ class ProposalApplyService:
         self.source = source or GitMarkdownSource(settings.knowledge_root)
         self.writer = writer or SecureKnowledgeWriter(settings.knowledge_root)
         self.document_indexer = document_indexer or (
-            lambda document: index_document(settings, document)
+            lambda document: index_document(settings, document, coordinated=True)
         )
 
     def get(self, identity: ClientIdentity, proposal_id: UUID) -> ApplyView:

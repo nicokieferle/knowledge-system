@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 
 from knowledge_system.conversation_models import MessageRole, ProposalDraft, ProposalTriggerType
 from knowledge_system.conversation_store import PostgresConversationStore
-from knowledge_system.proposal_apply import ProposalApplyService
+from knowledge_system.db import init_db
+from knowledge_system.indexer import index_document
+from knowledge_system.knowledge_apply import SecureKnowledgeWriter
+from knowledge_system.proposal_apply import PostgresApplyStore, ProposalApplyService
 from knowledge_system.proposal_review import ProposalStatus
 from knowledge_system.proposal_store import PostgresProposalStore, ProposalCreate
 from knowledge_system.review_web import create_app
@@ -26,6 +29,21 @@ def database(tmp_path):
 
 def application(settings):
     return ProposalApplyService(settings, document_indexer=lambda document: None)
+
+
+class FakeEmbedder:
+    def encode(self, values):
+        return [[float(index + 1)] * 384 for index, _ in enumerate(values)]
+
+
+def real_document_indexer(settings):
+    return lambda document: index_document(
+        settings, document, embedder=FakeEmbedder(), coordinated=True
+    )
+
+
+class SimulatedProcessLoss(BaseException):
+    pass
 
 
 @pytest.mark.parametrize(
@@ -222,6 +240,87 @@ def test_browser_legacy_apply_and_index_retry_show_real_states(database):
         retried = client.post(path + "/retry-index", data={"csrf": token}, follow_redirects=False)
         assert retried.status_code == 303
         assert "<dd>indexed</dd>" in client.get(path).text
+
+
+@pytest.mark.parametrize("after_index_commit", [False, True])
+def test_browser_recovers_pending_index_through_authenticated_csrf_post(
+    database, after_index_commit
+):
+    init_db(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    store = PostgresApplyStore(database)
+    store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
+
+    if after_index_commit:
+
+        def committed_then_process_loss(document):
+            index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
+            raise SimulatedProcessLoss()
+
+        with pytest.raises(SimulatedProcessLoss):
+            store.execute_index(
+                who,
+                proposal.id,
+                reviews.source,
+                committed_then_process_loss,
+            )
+
+    apply_service = ProposalApplyService(
+        database, store=store, document_indexer=real_document_indexer(database)
+    )
+    app = create_app(replace(web_settings(), owner=who), reviews, apply_service)
+    with TestClient(app) as client:
+        token = login(client)
+        path = f"/reviews/{proposal.id}"
+        page = client.get(path)
+        assert "<dd>pending</dd>" in page.text
+        assert "Retry indexing" in page.text
+        assert client.post(path + "/retry-index", data={"csrf": "wrong"}).status_code == 403
+        retried = client.post(path + "/retry-index", data={"csrf": token}, follow_redirects=False)
+        assert retried.status_code == 303
+        completed = client.get(path)
+        assert "<dd>indexed</dd>" in completed.text
+        assert "Retry indexing" not in completed.text
+
+    with psycopg.connect(database.database_url) as conn:
+        assert (
+            conn.execute("SELECT count(*) FROM chunks WHERE source_path='new.md'").fetchone()[0]
+            == 1
+        )
+
+
+def test_browser_pending_index_retry_rejects_unapplied_and_foreign_owner(database):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    store = PostgresApplyStore(database)
+    store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    apply_service = ProposalApplyService(database, store=store, document_indexer=lambda _: None)
+
+    with TestClient(
+        create_app(replace(web_settings(), owner=who), reviews, apply_service)
+    ) as client:
+        token = login(client)
+        response = client.post(
+            f"/reviews/{proposal.id}/retry-index",
+            data={"csrf": token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 409
+
+    foreign = replace(who, external_user_id="foreign")
+    with TestClient(
+        create_app(replace(web_settings(), owner=foreign), reviews, apply_service)
+    ) as client:
+        token = login(client)
+        response = client.post(
+            f"/reviews/{proposal.id}/retry-index",
+            data={"csrf": token},
+            follow_redirects=False,
+        )
+        assert response.status_code == 404
 
 
 def test_queue_over_100_owner_scope_and_context(database):

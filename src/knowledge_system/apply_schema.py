@@ -42,10 +42,6 @@ BEGIN
         CHECK (expected_old_hash IS NULL OR expected_old_hash ~ '^[0-9a-f]{64}$'),
         CHECK (expected_new_hash ~ '^[0-9a-f]{64}$'),
         CHECK (actual_hash IS NULL OR actual_hash ~ '^[0-9a-f]{64}$'),
-        CHECK ((apply_status = 'applied' AND actual_hash = expected_new_hash
-                AND applied_at IS NOT NULL AND apply_error_class IS NULL)
-               OR (apply_status != 'applied' AND actual_hash IS NULL
-                   AND applied_at IS NULL)),
         CHECK (index_status != 'indexed' OR apply_status = 'applied'),
         CHECK ((apply_status IN ('conflict', 'failed')) = (apply_error_class IS NOT NULL)),
         CHECK ((index_status = 'failed') = (index_error_class IS NOT NULL)),
@@ -57,6 +53,26 @@ BEGIN
                (index_attempts > 0 AND last_index_attempt_at IS NOT NULL)),
         CHECK (refresh_proposal_id IS NULL OR apply_status = 'conflict')
     );
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'proposal_applies'::regclass
+          AND conname = 'proposal_applies_apply_result_check'
+    ) THEN
+        -- Adding the validated constraint is the migration for existing V3.3
+        -- schemas. Corrupt success rows abort this entire DO block; they are
+        -- reported for operator repair and are never silently rewritten.
+        ALTER TABLE proposal_applies
+            ADD CONSTRAINT proposal_applies_apply_result_check
+            CHECK (
+                (apply_status = 'applied' AND actual_hash IS NOT NULL
+                 AND actual_hash = expected_new_hash AND applied_at IS NOT NULL
+                 AND apply_error_class IS NULL)
+                OR
+                (apply_status != 'applied' AND actual_hash IS NULL
+                 AND applied_at IS NULL)
+            );
+    END IF;
 
     CREATE INDEX IF NOT EXISTS proposal_applies_status_idx
         ON proposal_applies (apply_status, index_status, updated_at);

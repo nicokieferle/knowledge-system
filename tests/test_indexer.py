@@ -62,9 +62,10 @@ def test_indexer_uses_source_adapter(monkeypatch, capsys) -> None:
     chunks = chunk_markdown_text("# Test\n\nContent.", "economics/test.md")
     fake_conn = FakeConnection()
 
-    def fake_load_existing_chunk_state(settings: Settings, source_id: str):
+    def fake_load_existing_chunk_state(conn, source_id: str):
+        assert conn is fake_conn
         assert source_id == "test-source"
-        return {chunk.chunk_key: (chunk.content_hash, settings.embedding_model) for chunk in chunks}
+        return {chunk.chunk_key: (chunk.content_hash, "model") for chunk in chunks}
 
     @contextmanager
     def fake_connect(settings: Settings):
@@ -119,8 +120,9 @@ def test_document_index_replaces_only_one_path_in_one_transaction() -> None:
     )
 
     assert count == 2
-    assert "DELETE FROM chunks WHERE source_id=%s AND source_path=%s" in connection.calls[0][0]
-    assert connection.calls[0][1] == ("knowledge-git", "economics/test.md")
+    delete = next(call for call in connection.calls if "DELETE FROM chunks" in call[0])
+    assert delete[1] == ("knowledge-git", "economics/test.md")
+    assert "pg_advisory_xact_lock_shared" in connection.calls[0][0]
     inserts = [call for call in connection.calls if "INSERT INTO chunks" in call[0]]
     assert len(inserts) == 2
     assert {call[1][4] for call in inserts} == {0, 1}

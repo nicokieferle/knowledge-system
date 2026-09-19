@@ -44,12 +44,18 @@ content/hash binding, successful-state consistency, immutable bindings, terminal
 results and append-only deletion protection. Accept & Apply writes the accepted decision,
 proposal status and apply intent in one PostgreSQL transaction. A migration only installs
 DDL; old accepted proposals receive no apply row and no file/index side effect.
+The named apply-result constraint additionally requires a non-NULL actual hash equal to the
+accepted new hash for every `applied` row. Re-running initialization adds and validates this
+constraint on an existing V3.3 schema atomically; invalid rows abort migration for explicit
+operator investigation and are never repaired silently.
 
 If a conflict needs a new basis, the original accepted proposal cannot be reopened without
 violating its immutable decision. `Refresh review` instead locks the conflict, appends one
 generic control message and one pending successor proposal in the same transaction, binds it
-to the conflict, and prepares the successor through the existing safe review snapshot. Retries
-reuse the same successor. No historical decision or accepted binding changes.
+to the conflict, and copies target and candidate bytes from the immutable accepted review—not
+from the older proposal draft. Preparing the successor updates only the filesystem basis through
+the existing safe review snapshot. Retries reuse the same successor, and later conflict refreshes
+continue carrying those human-approved edits. No historical decision or accepted binding changes.
 
 ## Filesystem procedure
 
@@ -93,29 +99,42 @@ make the actual state explicit:
 | after index commit, before status confirmation | complete new chunks, status pending | repeat document replacement and confirm |
 
 A target already containing the exact new bytes is accepted only for this apply row's exact
-bound revision. An old/absent target proceeds. Every other state is a conflict and is never
-overwritten. Apply failures never trigger indexing. Index failures never roll back or hide the
-applied file.
+bound revision. Before that retry can succeed, it opens and `fsync`s the exact regular target,
+`fsync`s the pinned parent directory, revalidates the parent chain and securely rereads the
+bytes. Persistent synchronization failure therefore remains failed; a transient failure can be
+healed by an explicit retry. An old/absent target proceeds. Every other state is a conflict and
+is never overwritten. Apply failures never trigger indexing. Index failures never roll back or
+hide the applied file.
 
 ## Concurrency and indexing
 
-Proposal/apply rows are locked in PostgreSQL. Apply and indexing also acquire the same stable
-transaction-scoped advisory lock derived from normalized source/path. Concurrent identical
-submits create one decision, intent, file result and index operation. Two proposals based on
-the same old file serialize; one writes and the other observes a conflict. Refresh during an
-apply waits for the row and cannot replace a successful result.
+The PostgreSQL lock order is proposal/apply row, shared global index lock, then document lock.
+The document identity reuses the validated portable source/path namespace and casefolds its
+ASCII-only path components, so aliases such as `note.md` and `Note.md` serialize without globally
+serializing unrelated documents. Concurrent identical submits create one decision, intent, file
+result and index operation. Two proposals based on the same old file or portable case alias
+serialize; one writes and the other observes a conflict. Refresh during an apply waits for the
+row and cannot replace a successful result.
+
+A full index takes the exclusive form of the global PostgreSQL advisory lock before source
+discovery, filesystem reads, chunk/delta calculation and database replacement. Apply and
+document indexing take its shared form before their canonical document lock. This keeps
+independent documents parallel while preventing a full run from committing a mixture of source
+revisions. Full indexing takes no proposal row or document lock, so the order has no inverse edge.
 
 After apply, the source is securely reread and its hash must still equal the bound new hash.
 `index_document` chunks exactly those bytes, computes embeddings, and deletes/reinserts only
 that `(source_id, source_path)` in one PostgreSQL transaction. The unique source/path/ordinal
-index prevents duplicates. No global production reindex is started.
+index prevents duplicates. The low-level document function can also acquire the shared/document
+locks for standalone replacement; apply passes an already coordinated snapshot. No global
+production reindex is started.
 
 ## Browser and client boundary
 
 Pending/deferred proposals show the complete immutable revision and full diff before
 `Accept & Apply`, `Reject` and `Defer`. Old accepted records show „akzeptiert, noch nicht
 angewendet“ and require `Apply accepted revision`. Pending/failed/crash states expose Apply
-retry; applied/index-failed states expose index retry; conflicts expose both safe retry and
+retry; applied/index-pending or index-failed states expose index retry; conflicts expose both safe retry and
 `Refresh review` until a successor is bound. Statuses, attempts, timestamps, bound revision,
 truncated hashes and controlled error classes are rendered without host paths or private
 exception text.

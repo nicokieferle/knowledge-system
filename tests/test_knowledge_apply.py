@@ -170,19 +170,25 @@ def test_real_temp_io_errors_leave_original_and_clean_temp(tmp_path, monkeypatch
 
 
 @pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")
-def test_directory_fsync_error_after_rename_retries_idempotently(tmp_path, monkeypatch):
+@pytest.mark.parametrize("old", [None, "old\n"])
+def test_transient_directory_fsync_error_is_resynchronized_on_retry(tmp_path, monkeypatch, old):
     target = tmp_path / "notes.md"
-    target.write_text("old\n", encoding="utf-8")
-    item = revision("notes.md", "old\n", "accepted\n")
+    if old is not None:
+        target.write_text(old, encoding="utf-8")
+    item = revision("notes.md", old, "accepted\n")
     apply_id = uuid4()
     real_fsync = os.fsync
-    calls = 0
+    directory_calls = 0
+    regular_calls = 0
 
     def fail_directory_fsync(fd):
-        nonlocal calls
-        calls += 1
-        if calls == 3:
-            raise OSError()
+        nonlocal directory_calls, regular_calls
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_calls += 1
+            if directory_calls == 1:
+                raise OSError()
+        else:
+            regular_calls += 1
         return real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", fail_directory_fsync)
@@ -190,10 +196,41 @@ def test_directory_fsync_error_after_rename_retries_idempotently(tmp_path, monke
         SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
     assert target.read_text(encoding="utf-8") == "accepted\n"
 
-    monkeypatch.setattr(os, "fsync", real_fsync)
     recovered = SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
     assert recovered.wrote is False
+    assert directory_calls == 2
+    assert regular_calls == 3
     assert not list(tmp_path.glob(".knowledge-apply-*"))
+
+
+@pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")
+@pytest.mark.parametrize("old", [None, "old\n"])
+def test_persistent_directory_fsync_error_keeps_retry_failed(tmp_path, monkeypatch, old):
+    target = tmp_path / "notes.md"
+    if old is not None:
+        target.write_text(old, encoding="utf-8")
+    item = revision("notes.md", old, "accepted\n")
+    apply_id = uuid4()
+    real_fsync = os.fsync
+    directory_calls = 0
+    regular_calls = 0
+
+    def fail_directory_fsync(fd):
+        nonlocal directory_calls, regular_calls
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_calls += 1
+            raise OSError()
+        regular_calls += 1
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_directory_fsync)
+    for _ in range(2):
+        with pytest.raises(KnowledgeIOFailure, match="filesystem_error"):
+            SecureKnowledgeWriter(tmp_path).apply(apply_id, item)
+
+    assert target.read_text(encoding="utf-8") == "accepted\n"
+    assert directory_calls == 2
+    assert regular_calls == 3
 
 
 @pytest.mark.skipif(os.name != "posix", reason="V3.3 apply requires Linux descriptor APIs")

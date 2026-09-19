@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import os
+import stat
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Barrier, Event, Lock
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -12,7 +17,7 @@ import pytest
 from knowledge_system.apply_schema import APPLY_SCHEMA
 from knowledge_system.client_state import ClientIdentity
 from knowledge_system.db import init_db
-from knowledge_system.indexer import index_document
+from knowledge_system.indexer import index_document, index_knowledge
 from knowledge_system.knowledge_apply import SecureKnowledgeWriter
 from knowledge_system.proposal_apply import PostgresApplyStore, ProposalApplyService
 from knowledge_system.proposal_review import InvalidTransition, ProposalStatus, ReviewForbidden
@@ -37,7 +42,32 @@ def initialize(settings):
 
 
 def document_indexer(settings):
-    return lambda document: index_document(settings, document, embedder=FakeEmbedder())
+    return lambda document: index_document(
+        settings, document, embedder=FakeEmbedder(), coordinated=True
+    )
+
+
+def initial_v33_schema():
+    import ast
+
+    original = subprocess.run(
+        [
+            "git",
+            "show",
+            "374af059d80258033634404169c51e4945016ba5:src/knowledge_system/apply_schema.py",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return next(
+        ast.literal_eval(node.value)
+        for node in ast.walk(ast.parse(original))
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "APPLY_SCHEMA" for target in node.targets
+        )
+    )
 
 
 def test_apply_schema_is_atomic_on_autocommit_failure(database):
@@ -48,6 +78,127 @@ def test_apply_schema_is_atomic_on_autocommit_failure(database):
         with pytest.raises(psycopg.Error):
             conn.execute(APPLY_SCHEMA + "\nSELECT definitely_missing_v33_function();")
         assert conn.execute("SELECT to_regclass('proposal_applies')").fetchone()[0] is None
+
+
+def test_existing_v33_schema_migration_is_repeatable_and_atomic(database):
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        for statement in pg_review.v312_statements():
+            conn.execute(statement)
+        conn.execute(REVIEW_SCHEMA)
+        conn.execute(initial_v33_schema())
+
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    reviews.decide(who, proposal.id, revision.id, ProposalStatus.ACCEPTED)
+    PostgresApplyStore(database).ensure_intent(who, proposal.id, revision.id)
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        conn.execute(
+            """UPDATE proposal_applies SET apply_status='applied',
+            actual_hash=expected_new_hash, apply_attempts=1,
+            last_apply_attempt_at=now(), applied_at=now()"""
+        )
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM pg_constraint WHERE conname=%s",
+                ("proposal_applies_apply_result_check",),
+            ).fetchone()[0]
+            == 0
+        )
+        with pytest.raises(psycopg.Error, match="definitely_missing_v33_migration"):
+            conn.execute(APPLY_SCHEMA + "\nSELECT definitely_missing_v33_migration();")
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM pg_constraint WHERE conname=%s",
+                ("proposal_applies_apply_result_check",),
+            ).fetchone()[0]
+            == 0
+        )
+        conn.execute(APPLY_SCHEMA)
+        conn.execute(APPLY_SCHEMA)
+        definition = conn.execute(
+            """SELECT pg_get_constraintdef(oid) FROM pg_constraint
+            WHERE conname='proposal_applies_apply_result_check'"""
+        ).fetchone()[0]
+        assert "actual_hash IS NOT NULL" in definition
+        assert conn.execute(
+            "SELECT actual_hash=expected_new_hash FROM proposal_applies"
+        ).fetchone()[0]
+
+
+def test_existing_corrupt_v33_success_blocks_migration_without_repair(database):
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        for statement in pg_review.v312_statements():
+            conn.execute(statement)
+        conn.execute(REVIEW_SCHEMA)
+        conn.execute(initial_v33_schema())
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    PostgresApplyStore(database).accept_and_intent(who, proposal.id, revision.id, "pending")
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        conn.execute(
+            """UPDATE proposal_applies SET apply_status='applied', actual_hash=NULL,
+            applied_at=now(), apply_attempts=1, last_apply_attempt_at=now()"""
+        )
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(APPLY_SCHEMA)
+        row = conn.execute("SELECT apply_status, actual_hash FROM proposal_applies").fetchone()
+        assert row == ("applied", None)
+        assert (
+            conn.execute(
+                "SELECT count(*) FROM pg_constraint WHERE conname=%s",
+                ("proposal_applies_apply_result_check",),
+            ).fetchone()[0]
+            == 0
+        )
+
+
+def test_applied_rows_require_a_matching_nonnull_hash_on_insert_and_update(database):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    reviews.decide(who, proposal.id, revision.id, ProposalStatus.ACCEPTED)
+    with (
+        psycopg.connect(database.database_url, autocommit=True) as conn,
+        pytest.raises(psycopg.errors.CheckViolation),
+    ):
+        conn.execute(
+            """INSERT INTO proposal_applies
+                (id, proposal_id, review_id, target_source_id, target_source_path,
+                 expected_old_hash, expected_absent, expected_new_hash, apply_status,
+                 actual_hash, apply_attempts, last_apply_attempt_at, applied_at,
+                 actor_client_type, actor_external_chat_id, actor_external_user_id)
+                VALUES (gen_random_uuid(),%s,%s,%s,%s,%s,%s,%s,'applied',NULL,1,
+                        now(),now(),%s,%s,%s)""",
+            (
+                proposal.id,
+                revision.id,
+                revision.content.target_source_id,
+                revision.content.target_source_path,
+                revision.content.old_hash,
+                revision.content.change_kind == "create",
+                revision.content.new_hash,
+                who.client_type,
+                who.external_chat_id,
+                who.external_user_id,
+            ),
+        )
+
+    store = PostgresApplyStore(database)
+    store.ensure_intent(who, proposal.id, revision.id)
+    with psycopg.connect(database.database_url, autocommit=True) as conn:
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                """UPDATE proposal_applies SET apply_status='applied', actual_hash=NULL,
+                apply_attempts=1, last_apply_attempt_at=now(), applied_at=now()"""
+            )
+        conn.execute(
+            """UPDATE proposal_applies SET apply_status='applied',
+            actual_hash=expected_new_hash, apply_attempts=1,
+            last_apply_attempt_at=now(), applied_at=now()"""
+        )
+        assert conn.execute(
+            "SELECT actual_hash=expected_new_hash FROM proposal_applies"
+        ).fetchone()[0]
 
 
 def test_migration_never_creates_apply_for_previously_accepted_proposal(database):
@@ -102,7 +253,7 @@ def test_accept_apply_writes_exactly_once_and_indexes_idempotently(database):
         nonlocal calls
         with lock:
             calls += 1
-        return index_document(database, document, embedder=FakeEmbedder())
+        return index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
 
     service = ProposalApplyService(database, document_indexer=index)
     start = Barrier(2)
@@ -212,6 +363,41 @@ def test_retry_after_file_write_before_database_completion(database):
     assert not list(database.knowledge_root.glob(".knowledge-apply-*"))
 
 
+def test_apply_journal_stays_failed_until_retry_resynchronizes(database, monkeypatch):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    store = PostgresApplyStore(database)
+    store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    real_fsync = os.fsync
+    directory_calls = 0
+
+    def fail_directory(fd):
+        nonlocal directory_calls
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_calls += 1
+            raise OSError()
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fail_directory)
+    for expected_attempts in (1, 2):
+        result = store.execute_apply(
+            who, proposal.id, SecureKnowledgeWriter(database.knowledge_root)
+        ).apply
+        assert result.apply_status == "failed"
+        assert result.actual_hash is None
+        assert result.apply_attempts == expected_attempts
+    assert directory_calls == 2
+
+    monkeypatch.setattr(os, "fsync", real_fsync)
+    healed = store.execute_apply(
+        who, proposal.id, SecureKnowledgeWriter(database.knowledge_root)
+    ).apply
+    assert healed.apply_status == "applied"
+    assert healed.actual_hash == revision.content.new_hash
+    assert healed.apply_attempts == 3
+
+
 def test_index_failure_keeps_applied_file_and_retry_replaces_chunks(database):
     initialize(database)
     reviews, who, proposal = seed(database)
@@ -222,7 +408,7 @@ def test_index_failure_keeps_applied_file_and_retry_replaces_chunks(database):
     assert applied.apply.apply_status == "applied"
 
     def committed_then_lost_confirmation(document):
-        index_document(database, document, embedder=FakeEmbedder())
+        index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
         raise RuntimeError("private details must not be stored")
 
     failed = store.execute_index(
@@ -328,11 +514,16 @@ def test_error_states_cannot_be_reset_to_pending_by_direct_sql(database):
             )
 
 
-def test_conflict_refresh_creates_one_owned_pending_successor(database):
+def test_conflict_refresh_preserves_accepted_edits_across_repeated_refresh(database):
     initialize(database)
     reviews, who, proposal = seed(database)
-    revision = reviews.prepare(who, proposal.id).revision
-    target = database.knowledge_root / "new.md"
+    revision = reviews.prepare(
+        who,
+        proposal.id,
+        target_source_path="edited.md",
+        new_content="human correction\n",
+    ).revision
+    target = database.knowledge_root / "edited.md"
     target.write_text("concurrent base\n", encoding="utf-8")
     service = ProposalApplyService(database, document_indexer=document_indexer(database))
     conflicted = service.accept_and_apply(who, proposal.id, revision.id, "pending")
@@ -350,7 +541,8 @@ def test_conflict_refresh_creates_one_owned_pending_successor(database):
     successor = refreshed[0]
     assert successor.proposal.status == "pending"
     assert successor.revision.content.old_content == "concurrent base\n"
-    assert successor.revision.content.new_content == "new\n"
+    assert successor.revision.content.target_source_path == "edited.md"
+    assert successor.revision.content.new_content == "human correction\n"
     original = service.get(who, proposal.id)
     assert original.review.accepted_review_id == revision.id
     assert original.apply.refresh_proposal_id == successor.proposal.id
@@ -358,10 +550,18 @@ def test_conflict_refresh_creates_one_owned_pending_successor(database):
         # Once a replacement review exists, the immutable conflicted attempt
         # cannot unexpectedly become the winning write.
         service.retry_apply(who, proposal.id)
-    applied = service.accept_and_apply(who, successor.proposal.id, successor.revision.id, "pending")
+    target.write_text("second concurrent base\n", encoding="utf-8")
+    repeated_conflict = service.accept_and_apply(
+        who, successor.proposal.id, successor.revision.id, "pending"
+    )
+    assert repeated_conflict.apply.apply_status == "conflict"
+    repeated = service.refresh_review(who, successor.proposal.id)
+    assert repeated.revision.content.target_source_path == "edited.md"
+    assert repeated.revision.content.new_content == "human correction\n"
+    applied = service.accept_and_apply(who, repeated.proposal.id, repeated.revision.id, "pending")
     assert applied.apply.apply_status == "applied"
     assert applied.apply.index_status == "indexed"
-    assert target.read_text(encoding="utf-8") == "new\n"
+    assert target.read_text(encoding="utf-8") == "human correction\n"
     with psycopg.connect(database.database_url) as conn:
         assert (
             conn.execute(
@@ -387,7 +587,7 @@ def test_index_commit_before_status_crash_is_idempotently_confirmed(database):
     store.execute_apply(who, proposal.id, SecureKnowledgeWriter(database.knowledge_root))
 
     def committed_then_process_loss(document):
-        index_document(database, document, embedder=FakeEmbedder())
+        index_document(database, document, embedder=FakeEmbedder(), coordinated=True)
         raise SimulatedProcessLoss()
 
     with pytest.raises(SimulatedProcessLoss):
@@ -457,3 +657,150 @@ def test_document_replace_rolls_back_on_real_postgres_error(database):
             ).fetchall()
         ]
     assert contents and all("Old body" in content for content in contents)
+
+
+@pytest.mark.parametrize("first_path,second_path", [("note.md", "Note.md"), ("Note.md", "note.md")])
+def test_parallel_case_alias_creates_exactly_one_file(
+    database, monkeypatch, first_path, second_path
+):
+    initialize(database)
+    jobs = []
+    store = PostgresApplyStore(database)
+    for path in (first_path, second_path):
+        reviews, who, proposal = seed(database)
+        revision = reviews.prepare(who, proposal.id, target_source_path=path).revision
+        store.accept_and_intent(who, proposal.id, revision.id, "pending")
+        jobs.append((who, proposal.id))
+
+    from knowledge_system import proposal_apply
+
+    real_lock = proposal_apply.lock_document_index
+    first_acquired = Event()
+    second_attempted = Event()
+    release_first = Event()
+    calls = 0
+    call_lock = Lock()
+
+    def controlled_lock(conn, source_id, source_path):
+        nonlocal calls
+        with call_lock:
+            calls += 1
+            number = calls
+        if number == 2:
+            second_attempted.set()
+        real_lock(conn, source_id, source_path)
+        if number == 1:
+            first_acquired.set()
+            assert release_first.wait(timeout=10)
+
+    monkeypatch.setattr(proposal_apply, "lock_document_index", controlled_lock)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(
+            store.execute_apply,
+            jobs[0][0],
+            jobs[0][1],
+            SecureKnowledgeWriter(database.knowledge_root),
+        )
+        assert first_acquired.wait(timeout=10)
+        second = pool.submit(
+            store.execute_apply,
+            jobs[1][0],
+            jobs[1][1],
+            SecureKnowledgeWriter(database.knowledge_root),
+        )
+        assert second_attempted.wait(timeout=10)
+        release_first.set()
+        statuses = [
+            first.result(timeout=10).apply.apply_status,
+            second.result(timeout=10).apply.apply_status,
+        ]
+
+    assert statuses == ["applied", "conflict"]
+    assert [path.name for path in database.knowledge_root.iterdir()] == [first_path]
+
+
+def test_full_index_and_parallel_applies_use_one_consistent_lock_order(database, monkeypatch):
+    initialize(database)
+    contents = {
+        "a.md": ("# A\n\nold A\n", "# A\n\naccepted A\n"),
+        "b.md": ("# B\n\nold B\n", "# B\n\naccepted B\n"),
+    }
+    source = GitMarkdownSource(database.knowledge_root)
+    for path, (old, _) in contents.items():
+        (database.knowledge_root / path).write_text(old, encoding="utf-8")
+        index_document(database, source.get_document(path), embedder=FakeEmbedder())
+
+    jobs = []
+    store = PostgresApplyStore(database)
+    for path, (_, new) in contents.items():
+        reviews, who, proposal = seed(database)
+        revision = reviews.prepare(
+            who, proposal.id, target_source_path=path, new_content=new
+        ).revision
+        store.accept_and_intent(who, proposal.id, revision.id, "pending")
+        jobs.append((who, proposal.id))
+
+    first_snapshotted = Event()
+    release_snapshot = Event()
+
+    class PausedSource:
+        source_id = "knowledge-git"
+
+        def discover(self):
+            first = source.get_document("a.md")
+            first_snapshotted.set()
+            assert release_snapshot.wait(timeout=10)
+            return [first, source.get_document("b.md")]
+
+    monkeypatch.setitem(
+        sys.modules,
+        "knowledge_system.embedder",
+        SimpleNamespace(LocalEmbedder=lambda *_args: FakeEmbedder()),
+    )
+    from knowledge_system import proposal_apply
+
+    real_lock = proposal_apply.lock_document_index
+    apply_lock_attempts = Barrier(3)
+    observed_calls = 0
+    observed_calls_lock = Lock()
+
+    def observed_lock(conn, source_id, source_path):
+        nonlocal observed_calls
+        with observed_calls_lock:
+            observed_calls += 1
+            number = observed_calls
+        if number <= 2:
+            apply_lock_attempts.wait(timeout=10)
+        real_lock(conn, source_id, source_path)
+
+    monkeypatch.setattr(proposal_apply, "lock_document_index", observed_lock)
+    service = ProposalApplyService(
+        database, store=store, document_indexer=document_indexer(database)
+    )
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        full = pool.submit(index_knowledge, database, PausedSource())
+        assert first_snapshotted.wait(timeout=10)
+        applies = [pool.submit(service.retry_apply, who, pid) for who, pid in jobs]
+        apply_lock_attempts.wait(timeout=10)
+        with psycopg.connect(database.database_url) as conn:
+            assert conn.execute(
+                "SELECT array_agg(index_status ORDER BY proposal_id) FROM proposal_applies"
+            ).fetchone()[0] == ["pending", "pending"]
+        release_snapshot.set()
+        full.result(timeout=10)
+        results = [future.result(timeout=10) for future in applies]
+
+    assert all(result.apply.index_status == "indexed" for result in results)
+    with psycopg.connect(database.database_url) as conn:
+        indexed = dict(
+            conn.execute(
+                "SELECT source_path, content FROM chunks WHERE source_path=ANY(%s)",
+                (list(contents),),
+            ).fetchall()
+        )
+    assert indexed == {
+        "a.md": "A\n\naccepted A",
+        "b.md": "B\n\naccepted B",
+    }
+    for who, pid in jobs:
+        assert service.retry_apply(who, pid).apply.index_status == "indexed"

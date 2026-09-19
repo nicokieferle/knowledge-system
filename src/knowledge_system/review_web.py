@@ -406,7 +406,7 @@ def create_app(
         if (
             current.apply is None
             or current.apply.apply_status != "applied"
-            or current.apply.index_status != "failed"
+            or current.apply.index_status not in ("pending", "failed")
         ):
             raise InvalidTransition()
         apply_service.retry_index(settings.owner, pid)

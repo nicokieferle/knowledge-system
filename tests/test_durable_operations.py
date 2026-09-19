@@ -114,6 +114,8 @@ def test_restore_is_defensive_and_never_cleans_existing_database() -> None:
     assert "SELECT setval(" not in restore
     assert "umask 077" in restore
     assert "Restored durable state failed integrity check" in common
+    assert "a.actual_hash IS NULL" in common
+    assert "a.actual_hash IS DISTINCT FROM a.expected_new_hash" in common
     assert "--clean" not in restore
     assert "DROP " not in restore
     assert "TRUNCATE " not in restore

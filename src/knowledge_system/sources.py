@@ -42,6 +42,19 @@ def validate_source_target(source_id: str, source_path: str) -> list[str]:
     return parts
 
 
+def portable_source_lock_identity(source_id: str, source_path: str) -> str:
+    """Return the case-insensitive identity used by portable collision locks.
+
+    Validation deliberately defines the one path namespace used by review and
+    apply. Its current portable alphabet is ASCII-only, so casefolding the
+    validated components is deterministic without introducing another Unicode
+    normalization policy.
+    """
+
+    parts = validate_source_target(source_id, source_path)
+    return source_id + ":" + "/".join(part.casefold() for part in parts)
+
+
 def _stable_file_metadata(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
     """Return change-sensitive identity metadata while deliberately excluding atime."""
 

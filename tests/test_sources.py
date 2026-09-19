@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from knowledge_system.sources import GitMarkdownSource, SourceDocument
+import pytest
+
+from knowledge_system.proposal_review import InvalidTarget
+from knowledge_system.sources import (
+    GitMarkdownSource,
+    SourceDocument,
+    portable_source_lock_identity,
+)
 
 
 def test_git_markdown_source_discovers_current_knowledge_documents() -> None:
@@ -56,3 +63,11 @@ def test_git_markdown_source_get_document_reads_original_source(tmp_path: Path) 
 
     assert document.content.startswith("---")
     assert "Original." in document.content
+
+
+def test_portable_lock_identity_uses_the_validated_case_namespace() -> None:
+    assert portable_source_lock_identity("knowledge-git", "Folder/Note.md") == (
+        portable_source_lock_identity("knowledge-git", "folder/note.md")
+    )
+    with pytest.raises(InvalidTarget):
+        portable_source_lock_identity("knowledge-git", "nöté.md")

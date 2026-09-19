@@ -49,7 +49,7 @@
 {% if application.apply_status in ('pending','conflict','failed') and not application.refresh_proposal_id %}<form method="post" action="/reviews/{{ view.proposal.id }}/retry-apply"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Retry apply</button></form>{% endif %}
 {% if application.apply_status == 'conflict' and not application.refresh_proposal_id %}<form method="post" action="/reviews/{{ view.proposal.id }}/refresh-review"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Refresh review</button></form>{% endif %}
 {% if application.refresh_proposal_id %}<p class="notice">Der Konflikt bleibt unverändert protokolliert. <a href="/reviews/{{ application.refresh_proposal_id }}">Neu geprüften Folge-Vorschlag öffnen</a>.</p>{% endif %}
-{% if application.apply_status == 'applied' and application.index_status == 'failed' %}<form method="post" action="/reviews/{{ view.proposal.id }}/retry-index"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Retry indexing</button></form>{% endif %}
+{% if application.apply_status == 'applied' and application.index_status in ('pending','failed') %}<form method="post" action="/reviews/{{ view.proposal.id }}/retry-index"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Retry indexing</button></form>{% endif %}
 {% endif %}</section>
 {% endif %}
 {% endblock %}

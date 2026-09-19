@@ -49,6 +49,10 @@ new image's explicit `knowledge init-db`. The additive migration creates the ele
 durable table, `proposal_applies`; it never creates an apply intent, writes Markdown or
 indexes. Previously accepted proposals remain unapplied. Validate an isolated restore
 and both backups before starting `review-web`. No rollout was performed by this task.
+For an already initialized V3.3 database, the same transactional initialization adds and
+validates the strengthened apply-result constraint requiring a non-NULL matching hash.
+An inconsistent historical success row makes migration fail atomically; stop and investigate
+it rather than editing or auto-repairing the audit record.
 
 After rollout, a recoverable backup set consists of both artifacts:
 

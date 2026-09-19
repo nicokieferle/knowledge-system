@@ -17,7 +17,7 @@ independent filesystem backup remain operator prerequisites and were not execute
 ## Local environment and commands
 
 The final local gate used Python 3.13, rootless Docker, PostgreSQL 17.11 and pgvector 0.8.6.
-It completed 389 unit/HTTP tests and 54 real PostgreSQL integration tests, with no failures
+It completed 393 unit/HTTP tests and 64 real PostgreSQL integration tests, with no failures
 or skips in either separately executed group. The only warning was the upstream Starlette
 `BlockingPortal` deprecation noted below. The final rootless BuildKit image build and the
 built-image database smoke test also succeeded; the smoke test reported
@@ -69,6 +69,14 @@ root-user warning inside the disposable Docker build stage.
 
 ## Security and correctness evidence
 
+The independent PR review's two high and four medium findings were reproduced against
+`374af059d80258033634404169c51e4945016ba5` before remediation. Regression coverage now proves
+that exact-new retries repeat file and directory synchronization, full indexing cannot overlap
+apply snapshots, case aliases share one document lock, conflict successors retain the accepted
+human target/content, browser recovery accepts both pending and failed index states, and
+`applied` rows require a non-NULL matching hash. The local counts above come from the completed
+validation artifacts; each pushed head is additionally accepted by the repository workflow.
+
 ### Domain, schema and durable state
 
 - Real PostgreSQL error injection proves the V3.3 `DO` migration rolls back completely even
@@ -79,6 +87,9 @@ root-user warning inside the disposable Docker build stage.
   accepted rows have no apply row and require explicit browser Apply.
 - Constraints/triggers reject mismatched review bindings, malformed success records, mutation
   of successful apply/index results and deletion of the apply audit row.
+- Existing valid V3.3 schemas receive the named apply-result constraint idempotently. A corrupt
+  NULL-hash success or an injected later DDL failure rolls the entire migration back without
+  changing the row or leaving a partial constraint.
 - The real archive roundtrip includes a nonempty `proposal_applies`, all eleven durable tables,
   exact fingerprint equality, validated FKs, enabled triggers and repaired sequence state.
   Existing corrupt-archive, incompatible-schema, nonempty-target and injected mid-restore
@@ -94,14 +105,23 @@ root-user warning inside the disposable Docker build stage.
 - Deterministic hooks cover target and parent exchange, target appearance, temp-name collision,
   partial writes, write/file-`fsync`/pre-rename errors, post-exchange process loss, directory
   `fsync` boundary, exact-new idempotency and apply-specific orphan cleanup.
+- Create and update retries after the rename repeat target-file and parent-directory `fsync`;
+  persistent failure remains nonterminal and a later successful retry heals it.
 - A third target state survives; tests never write the repository's real `knowledge/`.
 
 ### Concurrency, crash recovery and indexing
 
 - Two simultaneous submits for one revision produce one decision, one journal and one index
   call. Two accepted proposals for one base file serialize to one applied/one conflict result.
+- Both deterministic start orders for `note.md`/`Note.md` yield exactly one file and one conflict.
+  The lock identity is the casefolded form of the existing validated portable path namespace.
+- Full indexing holds an exclusive global advisory lock from before discovery through its index
+  commit. Apply/document indexing take the shared global lock before the canonical path lock;
+  controlled two-document interleaving finishes without mixed revisions, false `indexed`, or
+  deadlock, and retry remains idempotent.
 - Refresh during Apply waits for the row lock and cannot replace a successful result. Two
-  simultaneous conflict refreshes reuse one successor proposal/revision.
+  simultaneous conflict refreshes reuse one successor proposal/revision; changed human target
+  and candidate bytes survive both parallel and repeated conflict refreshes.
 - A crash after rename but before DB completion leaves the journal pending; retry recognizes
   the exact new file and confirms success. A committed index followed by lost status
   confirmation is replaced idempotently on retry with no duplicate chunks.
@@ -117,6 +137,9 @@ root-user warning inside the disposable Docker build stage.
 - Mutating V3.3 routes reject GET. Browser-to-real-PostgreSQL tests cover Accept & Apply, legacy
   explicit Apply, conflict display/refresh successor, apply retry state, index failure/retry and
   safe error rendering.
+- Browser-to-real-PostgreSQL recovery also covers a crash before index start and after index
+  commit but before journal confirmation. `pending` and `failed` show the same POST-only retry;
+  authentication, CSRF, ownership and apply-state checks remain active.
 - Legacy Telegram review/decision/refresh/apply callback prefixes remain informational before
   domain lookup. The only actionable Telegram choice is proposal creation/rejection; no
   decision, apply or index-retry capability was added.
@@ -137,5 +160,5 @@ root-user warning inside the disposable Docker build stage.
 - Production storage seed, ownership, backup rehearsal, migration and rollout remain manual;
   this branch does not contact or change production.
 - The Starlette test client currently emits one upstream `BlockingPortal` deprecation warning;
-  it causes no skip or failure. `actionlint` is not installed locally, and the unchanged
-  workflow is therefore verified by the repository's actual GitHub CI after push.
+  it causes no skip or failure. The unchanged workflow also passes local `actionlint`; the
+  repository's actual GitHub CI remains the authoritative hosted execution after each push.
