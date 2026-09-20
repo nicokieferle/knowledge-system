@@ -14,7 +14,7 @@ input,textarea,select { width:100%; font:inherit; border:1px solid var(--line); 
 textarea { resize:vertical; font-family:monospace; }
 input[type=checkbox] { width:auto; min-width:24px; min-height:24px; vertical-align:middle; }
 button,.button { display:inline-block; font:inherit; padding:.65rem 1rem; min-height:44px; border:1px solid var(--line); border-radius:6px; margin:.5rem 0; background:var(--panel); color:var(--ink); cursor:pointer; text-decoration:none; }
-button.primary,button.accept { background:var(--accent); color:#fff; } button.reject { border:2px solid #b94a4a; } button:disabled { opacity:.5; cursor:not-allowed; }
+button.primary,button.accept,button.accept-apply { background:var(--accent); color:#fff; } button.reject { border:2px solid #b94a4a; } button:disabled { opacity:.5; cursor:not-allowed; }
 :focus-visible { outline:3px solid #378bdb; outline-offset:4px; }
 .skip { position:absolute; top:-100px; } .skip:focus { top:0; background:var(--panel); padding:1rem; z-index:2; }
 .badge,.count { display:inline-block; padding:.2rem .6rem; border:1px solid var(--line); border-radius:20px; font-size:.85rem; }

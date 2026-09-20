@@ -73,6 +73,7 @@ def test_durable_fingerprint_is_deterministic_and_counts_all_tables(monkeypatch)
         "proposals": 0,
         "proposal_reviews": 0,
         "proposal_decisions": 0,
+        "proposal_applies": 0,
     }
     assert len(first.sha256) == 64
     assert "Private" not in first.sha256

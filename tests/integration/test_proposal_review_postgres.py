@@ -16,6 +16,7 @@ from knowledge_system.config import Settings
 from knowledge_system.conversation_models import MessageRole, ProposalDraft, ProposalTriggerType
 from knowledge_system.conversation_schema import init_conversation_schema
 from knowledge_system.conversation_store import PostgresConversationStore
+from knowledge_system.proposal_apply import PostgresApplyStore
 from knowledge_system.proposal_review import (
     InvalidTransition,
     ProposalNotFound,
@@ -321,6 +322,9 @@ def test_real_archive_restore_preserves_accepted_revision(database):
     accepted = service.prepare(who, p.id, new_content="accepted second revision\n").revision
     assert first.number == 1 and accepted.number == 2
     service.decide(who, p.id, accepted.id, ProposalStatus.ACCEPTED)
+    # Every durable table must contain representative data in the archive
+    # roundtrip; an accepted legacy proposal is still never applied implicitly.
+    PostgresApplyStore(database).ensure_intent(who, p.id, accepted.id)
     deferred_service, deferred_who, deferred_proposal = seed(database)
     deferred_revision = deferred_service.prepare(deferred_who, deferred_proposal.id).revision
     deferred_service.decide(
@@ -378,7 +382,7 @@ def test_real_archive_restore_preserves_accepted_revision(database):
             conn.execute("CREATE EXTENSION vector")
             conn.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
             init_conversation_schema(conn)
-        subprocess.run(
+        restore = subprocess.run(
             [
                 "docker",
                 "exec",
@@ -396,9 +400,10 @@ def test_real_archive_restore_preserves_accepted_revision(database):
                 "--exit-on-error",
             ],
             input=archive,
-            check=True,
+            check=False,
             capture_output=True,
         )
+        assert restore.returncode == 0, restore.stderr.decode()
         restored = replace(database, database_url=restored_url)
         assert read_durable_state_fingerprint(restored) == before
         assert PostgresReviewStore(restored).get(who, p.id).accepted_review_id == accepted.id
@@ -418,13 +423,16 @@ def test_real_archive_restore_preserves_accepted_revision(database):
                 conn.execute(
                     """SELECT tgname, tgenabled FROM pg_trigger
                     WHERE tgname IN ('proposal_reviews_immutable',
-                                     'proposal_decisions_immutable', 'proposals_terminal')"""
+                                     'proposal_decisions_immutable', 'proposals_terminal',
+                                     'proposal_applies_guard', 'proposal_applies_no_delete')"""
                 ).fetchall()
             )
             assert triggers == {
                 "proposal_reviews_immutable": "O",
                 "proposal_decisions_immutable": "O",
                 "proposals_terminal": "O",
+                "proposal_applies_guard": "O",
+                "proposal_applies_no_delete": "O",
             }
             with pytest.raises(psycopg.Error, match="Immutable review audit record"):
                 conn.execute(

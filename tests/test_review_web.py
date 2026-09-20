@@ -12,6 +12,7 @@ from argon2.profiles import CHEAPEST
 from fastapi.testclient import TestClient
 
 from knowledge_system.client_state import ClientIdentity
+from knowledge_system.proposal_apply import ApplyView
 from knowledge_system.proposal_review import (
     ProposalNotFound,
     ProposalReviewService,
@@ -25,6 +26,26 @@ from knowledge_system.sources import GitMarkdownSource
 from tests.test_proposal_review import MemoryReviewStore
 
 PASSWORD = "synthetic local password only"
+
+
+class MemoryApplyService:
+    def __init__(self, reviews, identity):
+        self.reviews, self.identity = reviews, identity
+        self.calls = []
+
+    def get(self, identity, proposal_id):
+        return ApplyView(self.reviews.get(identity, proposal_id), None)
+
+    def accept_and_apply(self, identity, proposal_id, review_id, expected_status):
+        self.calls.append(("accept", proposal_id, review_id))
+        review = self.reviews.decide(
+            identity,
+            proposal_id,
+            review_id,
+            "accepted",
+            expected_status=expected_status,
+        )
+        return ApplyView(review, None)
 
 
 def web_settings():
@@ -59,7 +80,7 @@ def web(tmp_path):
     store.context = Mock(return_value=())
     service = ProposalReviewService(store, GitMarkdownSource(tmp_path))
     settings = web_settings()
-    app = create_app(settings, service)
+    app = create_app(settings, service, MemoryApplyService(service, settings.owner))
     with TestClient(app) as client:
         yield client, app, store, service, settings
 
@@ -84,7 +105,21 @@ def test_login_rotation_logout_and_protected_routes(web):
 
 
 @pytest.mark.parametrize("token", [None, "wrong", "other-session"])
-@pytest.mark.parametrize("route", ["/login", "/logout", "/refresh", "/accept", "/reject", "/defer"])
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/login",
+        "/logout",
+        "/refresh",
+        "/decision/accept-apply",
+        "/decision/reject",
+        "/decision/defer",
+        "/apply",
+        "/retry-apply",
+        "/retry-index",
+        "/refresh-review",
+    ],
+)
 def test_every_post_requires_session_bound_csrf(web, token, route):
     client, app, store, _, _ = web
     login(client)
@@ -111,6 +146,26 @@ def test_detail_get_never_prepares_and_refresh_is_explicit(web):
     assert "Vollständiger Diff" in page.text and str(store.view.revision.id) in page.text
 
 
+@pytest.mark.parametrize(
+    "route",
+    [
+        "/refresh",
+        "/decision/accept-apply",
+        "/decision/reject",
+        "/decision/defer",
+        "/apply",
+        "/retry-apply",
+        "/retry-index",
+        "/refresh-review",
+    ],
+)
+def test_mutating_review_routes_do_not_accept_get(web, route):
+    client, _, store, _, _ = web
+    login(client)
+    assert client.get(f"/reviews/{store.view.proposal.id}{route}").status_code == 405
+    assert not store.decisions and not store.revisions
+
+
 def test_refresh_preserves_exact_bytes_unless_edit_is_explicit_and_rejects_old_tab(web):
     client, _, store, service, settings = web
     token = login(client)
@@ -130,7 +185,8 @@ def test_refresh_preserves_exact_bytes_unless_edit_is_explicit_and_rejects_old_t
 
 
 @pytest.mark.parametrize(
-    "action,status", [("accept", "accepted"), ("reject", "rejected"), ("defer", "deferred")]
+    "action,status",
+    [("accept-apply", "accepted"), ("reject", "rejected"), ("defer", "deferred")],
 )
 def test_browser_decision_passes_exact_revision_and_observed_status(web, action, status):
     client, _, store, service, settings = web
@@ -138,7 +194,7 @@ def test_browser_decision_passes_exact_revision_and_observed_status(web, action,
     view = service.prepare(settings.owner, store.view.proposal.id)
     original = store.decide
     store.decide = Mock(side_effect=original)
-    path = f"/reviews/{view.proposal.id}/{action}"
+    path = f"/reviews/{view.proposal.id}/decision/{action}"
     data = {"csrf": token, "review_id": str(view.revision.id), "status": "pending"}
     if action != "defer":
         assert client.post(path, data=data).status_code == 200
@@ -156,7 +212,7 @@ def test_stale_and_superseded_accept_are_rejected(web, tmp_path):
     token = login(client)
     first = service.prepare(settings.owner, store.view.proposal.id).revision
     second = service.prepare(settings.owner, store.view.proposal.id, new_content="second").revision
-    path = f"/reviews/{store.view.proposal.id}/accept"
+    path = f"/reviews/{store.view.proposal.id}/decision/accept-apply"
     data = {"csrf": token, "review_id": str(first.id), "status": "pending", "confirmed": "yes"}
     assert client.post(path, data=data).status_code == 409
     (tmp_path / "notes.md").write_text("changed")
@@ -244,7 +300,7 @@ def test_session_expiration_throttle_and_production_fail_closed(monkeypatch):
     with pytest.raises(ValueError):
         ReviewWebSettings.from_environment()
     strong = replace(settings, password_hash=PasswordHasher().hash(PASSWORD), mode="production")
-    app = create_app(strong, Mock())
+    app = create_app(strong, Mock(), Mock())
     with TestClient(app, base_url="https://testserver") as client:
         assert "Secure" in client.get("/login").headers["set-cookie"]
 

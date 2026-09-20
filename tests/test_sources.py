@@ -1,8 +1,22 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
-from knowledge_system.sources import GitMarkdownSource, SourceDocument
+import pytest
+
+from knowledge_system.index_coordination import (
+    GLOBAL_INDEX_LOCK_KEY,
+    document_lock_key,
+    parent_write_lock_key,
+)
+from knowledge_system.proposal_review import InvalidTarget
+from knowledge_system.sources import (
+    GitMarkdownSource,
+    SourceDocument,
+    portable_source_lock_identity,
+)
 
 
 def test_git_markdown_source_discovers_current_knowledge_documents() -> None:
@@ -56,3 +70,58 @@ def test_git_markdown_source_get_document_reads_original_source(tmp_path: Path) 
 
     assert document.content.startswith("---")
     assert "Original." in document.content
+
+
+def test_portable_lock_identity_uses_the_validated_case_namespace() -> None:
+    assert portable_source_lock_identity("knowledge-git", "Folder/Note.md") == (
+        portable_source_lock_identity("knowledge-git", "folder/note.md")
+    )
+    with pytest.raises(InvalidTarget):
+        portable_source_lock_identity("knowledge-git", "nöté.md")
+
+
+def test_document_lock_keys_are_stable_casefolded_and_domain_separated() -> None:
+    first = document_lock_key("knowledge-git", "p3059.md")
+    former_collision = document_lock_key("knowledge-git", "p98538.md")
+    alias = document_lock_key("knowledge-git", "Folder/Note.md")
+
+    assert first != former_collision
+    assert alias == document_lock_key("knowledge-git", "folder/note.md")
+    assert first < 0 and former_collision < 0 and alias < 0
+    assert GLOBAL_INDEX_LOCK_KEY > 0
+    output = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from knowledge_system.index_coordination import document_lock_key; "
+                "print(document_lock_key('knowledge-git', 'p3059.md'))"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert int(output) == first
+
+
+def test_parent_write_keys_are_casefolded_scoped_and_domain_separated():
+    root = parent_write_lock_key("knowledge-git", "a.md")
+    assert root == parent_write_lock_key("knowledge-git", "b.md")
+    folder = parent_write_lock_key("knowledge-git", "Folder/a.md")
+    assert folder == parent_write_lock_key("knowledge-git", "folder/B.md")
+    assert folder != root
+    assert -(1 << 62) <= root < -(1 << 61)
+    assert document_lock_key("knowledge-git", "a.md") < -(1 << 62)
+    assert GLOBAL_INDEX_LOCK_KEY > 0
+    output = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from knowledge_system.index_coordination import parent_write_lock_key; print(parent_write_lock_key('knowledge-git', 'a.md'))",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert int(output) == root

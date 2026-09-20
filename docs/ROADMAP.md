@@ -84,16 +84,19 @@
 - [x] owned, atomic, idempotent accept/reject/defer operations
 - [ ] external review and controlled V3.2 production rollout
 
-## V3.3 — safe Git apply
+## V3.3 — safe reviewed apply
 
 V3.2.1 adds the private browser review console (implementation, not deployed):
 single-admin auth, session-bound CSRF, owned paginated queue, explicit immutable
 review preparation and revision-bound decisions. Telegram only collects proposals;
 legacy review callbacks have no domain capability. See `v321-browser-review.md`.
 
-- [ ] isolated Git branch generation
-- [ ] guarded canonical knowledge writes after approval
-- [ ] reindex after reviewed merge
+- [x] dedicated persistent Knowledge root outside the application checkout
+- [x] guarded canonical Knowledge writes after browser approval
+- [x] crash-consistent durable apply journal and explicit retries
+- [x] document-scoped atomic index replacement after successful apply
+- [x] conflict refresh through a durable successor proposal
+- [ ] optional operator-side Git commit/branch workflow (no service credentials or push)
 
 ## V4 — additional sources
 
@@ -110,4 +113,5 @@ legacy review callbacks have no domain capability. See `v321-browser-review.md`.
 - [x] Normal chat, isolated memory and direct knowledge retrieval
 - [x] Proposal intent and inline suggestion confirmation
 
-V3.2 implementation awaits external review and deployment. V3.3 Git/Markdown writes remain open.
+V3.2/V3.3 implementation awaits an explicitly authorized production storage migration
+and deployment. No rollout is implied by implementation completion.

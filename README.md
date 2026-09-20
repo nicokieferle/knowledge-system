@@ -2,6 +2,27 @@
 
 CI für Pull Requests und `main`: [Pipeline, lokale Prüfung und Wartung](docs/CI.md).
 
+## V3.3: Revisionsgebundenes Apply und dokumentbezogene Indexierung
+
+Die private Browserkonsole bietet für neue Vorschläge **Accept & Apply**. Die
+akzeptierte immutable Review-Revision wird zuerst zusammen mit einem dauerhaften
+Apply-Intent in PostgreSQL gebunden. Erst danach prüft der Linux-Dateischreiber die
+aktuelle Basis descriptor-relativ erneut, ersetzt exakt die freigegebenen UTF-8-Bytes
+atomar und indexiert nur dieses erneut gelesene Dokument. Konflikte überschreiben
+nichts; Apply und Indexierung haben getrennte, idempotent wiederholbare Zustände.
+
+PostgreSQL, Dateisystem und Index sind ausdrücklich keine gemeinsame Transaktion.
+Der Apply-Journal macht Abstürze vor/nach Rename und vor/nach Indexbestätigung
+erkennbar und wiederholbar. Bereits früher akzeptierte Vorschläge bleiben nach der
+Migration unangewendet, bis im Browser ausdrücklich „Apply accepted revision“ gewählt
+wird. Telegram kann weiterhin nur die Erstellung eines Vorschlags bestätigen; MCP
+bleibt read-only. Details: [V3.3-Design](docs/v33-design.md).
+
+Production verwendet einen separat konfigurierten persistenten Knowledge-Daten-Root;
+der Application-Checkout ist nicht das Schreibziel. Es gibt weder automatische
+Git-Commits/-Pushes noch Production-Credentials. Die erstmalige Storage-Migration ist
+ein separater Operator-Schritt und wurde durch diese Änderung nicht ausgeführt.
+
 ## V3.2.1: Private Browser-Review-Konsole (development)
 
 **Telegram sammelt. Der Browser prüft und entscheidet. Das Backend erzwingt
@@ -13,8 +34,9 @@ Telegram erstellt weiterhin Vorschläge nach Bestätigung. `/proposals`, `/propo
 und `/proposal-refresh` geben nur noch einen Browser-Hinweis aus. Alte Review-Buttons
 sind serverseitig wirkungslos; Telegram liefert keine Diffs oder Entscheidungen mehr.
 
-**Akzeptieren bindet ausschließlich die angezeigte unveränderliche Revision.**
-Kein Markdown-/Git-Write, kein Apply, keine Indexierung. V3.3 bleibt ausstehend.
+Die historische V3.2.1-Grenze „Accept speichert nur Zustimmung“ bleibt für vor V3.3
+akzeptierte Datensätze sichtbar; V3.3 wendet sie nur nach einer neuen ausdrücklichen
+Browseraktion an.
 
 ## V3.2: Clientneutrale Review-Domain
 
@@ -61,7 +83,9 @@ For V0:
 - search uses exact cosine similarity
 - no AI is allowed to write directly to `main`
 
-Proposal review is available in V3.2; Git application and other source adapters remain later stages.
+Proposal review and guarded Markdown apply are available through V3.3. Versioning a
+dirty dedicated Knowledge checkout remains an explicit operator workflow; the service
+never commits or pushes Git.
 
 ## Architecture
 
