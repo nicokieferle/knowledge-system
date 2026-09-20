@@ -8,7 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from functools import partial
+from functools import partial, update_wrapper
 from threading import Barrier, Event, Lock
 from types import SimpleNamespace
 
@@ -502,6 +502,57 @@ def test_partial_subclass_override_is_rejected_before_any_mutation(database, kin
             assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("operation", ["accept", "apply_accepted", "retry_apply", "retry_index"])
+def test_nested_decorated_partial_override_is_rejected_before_any_mutation(database, operation):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    service = ProposalApplyService(database, document_indexer=document_indexer(database))
+    if operation != "accept":
+        service.store.accept_and_intent(who, proposal.id, revision.id, "pending")
+    if operation == "retry_index":
+        service.store.execute_apply(who, proposal.id, service.writer)
+    before = service.get(who, proposal.id)
+    target = database.knowledge_root / "new.md"
+    before_bytes = target.read_bytes() if target.exists() else None
+    with psycopg.connect(database.database_url) as conn:
+        before_counts = conn.execute(
+            """SELECT (SELECT count(*) FROM proposal_decisions),
+                      (SELECT count(*) FROM proposal_applies),
+                      (SELECT count(*) FROM chunks)"""
+        ).fetchone()
+
+    def good(document, *, coordination):
+        return 1
+
+    class IncompatiblePartial(partial):
+        def __call__(self, document):
+            raise AssertionError("must fail before execution")
+
+    inner = update_wrapper(IncompatiblePartial(good), good)
+    callback = partial(inner)
+    assert callback.func is inner
+    service.document_indexer = callback
+
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        if operation == "accept":
+            service.accept_and_apply(who, proposal.id, revision.id, "pending")
+        elif operation == "apply_accepted":
+            service.apply_accepted(who, proposal.id, revision.id)
+        else:
+            getattr(service, operation)(who, proposal.id)
+
+    assert service.get(who, proposal.id) == before
+    assert (target.read_bytes() if target.exists() else None) == before_bytes
+    with psycopg.connect(database.database_url) as conn:
+        after_counts = conn.execute(
+            """SELECT (SELECT count(*) FROM proposal_decisions),
+                      (SELECT count(*) FROM proposal_applies),
+                      (SELECT count(*) FROM chunks)"""
+        ).fetchone()
+    assert after_counts == before_counts
+
+
 def test_compatible_partial_subclass_override_commits_the_real_index(database):
     initialize(database)
     reviews, who, proposal = seed(database)
@@ -517,6 +568,37 @@ def test_compatible_partial_subclass_override_commits_the_real_index(database):
     callback = CompatiblePartial(lambda document: None)
     service = ProposalApplyService(database, document_indexer=callback)
     result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+    assert result.apply.apply_status == "applied"
+    assert result.apply.index_status == "indexed"
+    assert result.apply.apply_attempts == result.apply.index_attempts == 1
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute("SELECT content FROM chunks").fetchall() == [("(document)\n\nnew",)]
+
+
+def test_nested_decorated_partial_bindings_commit_the_real_index(database):
+    initialize(database)
+    reviews, who, proposal = seed(database)
+    revision = reviews.prepare(who, proposal.id).revision
+    real_index = document_indexer(database)
+    calls = []
+
+    def misleading(document, *, coordination):
+        raise AssertionError("wrapped metadata must not execute")
+
+    class CompatiblePartial(partial):
+        def __call__(self, prefix, document, suffix, coordination):
+            calls.append((prefix, suffix, coordination))
+            return real_index(document, coordination=coordination)
+
+    class InheritedPartial(partial):
+        pass
+
+    inner = update_wrapper(CompatiblePartial(misleading), misleading)
+    callback = partial(InheritedPartial(inner, "positional"), suffix="keyword")
+    service = ProposalApplyService(database, document_indexer=callback)
+    result = service.accept_and_apply(who, proposal.id, revision.id, "pending")
+
+    assert calls == [("positional", "keyword", DocumentIndexCoordination.LOCKS_HELD)]
     assert result.apply.apply_status == "applied"
     assert result.apply.index_status == "indexed"
     assert result.apply.apply_attempts == result.apply.index_attempts == 1

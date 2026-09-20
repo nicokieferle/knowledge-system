@@ -158,8 +158,9 @@ apply, and an apply waits while standalone embedding holds the document lock.
 Every call must provide the typed coordination state, and every injected callback must accept
 that keyword. Validation checks the actual outer signature without following `__wrapped__`;
 functions, forwarding wrappers, partials, bound methods and callable objects are supported.
-Normal partials retain their bound-argument signature; if a partial subclass overrides
-`__call__`, validation instead checks that actually bound outer method.
+Normal partials recursively apply each retained layer's positional and keyword bindings; if a
+partial subclass overrides `__call__`, validation instead checks the bound method selected by
+Python's MRO and applies any surrounding partial bindings to that effective outer interface.
 The service captures and validates the callback again before acceptance/intent or retry mutation,
 so an incompatible replaced dependency cannot change attempts, files or journal status.
 `LOCKS_HELD` callbacks do not reacquire locks on their index connection. Callbacks are trusted

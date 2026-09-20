@@ -5,7 +5,7 @@ import inspect
 from concurrent.futures import Future
 from contextlib import contextmanager
 from dataclasses import replace
-from functools import partial, wraps
+from functools import partial, update_wrapper, wraps
 from pathlib import Path
 from types import AsyncGeneratorType, CoroutineType, GeneratorType
 from typing import Any
@@ -244,6 +244,80 @@ def test_partial_subclass_override_uses_its_actual_bound_signature():
         validate_document_indexer(Incompatible(backing))
     validate_document_indexer(Compatible(backing))
     validate_document_indexer(PositionalOrKeyword(backing))
+
+
+def test_nested_partial_rejects_decorated_inner_override_signature():
+    def good(document, *, coordination):
+        return 1
+
+    class Bad(partial):
+        def __call__(self, document):
+            raise AssertionError("body must not execute")
+
+    inner = update_wrapper(Bad(good), good)
+    callback = partial(inner)
+    assert callback.func is inner
+
+    with pytest.raises(TypeError, match="keyword-only coordination"):
+        validate_document_indexer(callback)
+
+
+def test_nested_partial_layers_apply_bindings_to_the_effective_override_signature():
+    calls = []
+
+    def misleading(document, *, coordination):
+        raise AssertionError("wrapped metadata must not define the interface")
+
+    class Compatible(partial):
+        def __call__(self, prefix, document, suffix, *, coordination):
+            calls.append((prefix, document, suffix, coordination))
+            return 1
+
+    class Inherited(partial):
+        pass
+
+    inner = update_wrapper(Compatible(misleading), misleading)
+    positional = partial(inner, "positional", suffix="keyword")
+    nested = partial(Inherited(inner, "nested"), suffix="layers")
+    for callback in (positional, nested):
+        validate_document_indexer(callback)
+        assert callback(object(), coordination=DocumentIndexCoordination.LOCKS_HELD) == 1
+
+    assert [(prefix, suffix) for prefix, _, suffix, _ in calls] == [
+        ("positional", "keyword"),
+        ("nested", "layers"),
+    ]
+
+
+def test_partial_override_special_method_resolution_matches_python():
+    calls = []
+
+    def backing(document, *, coordination):
+        raise AssertionError("override must be used")
+
+    class CallMixin:
+        def __call__(self, document, coordination):
+            calls.append(("mixin", coordination))
+
+    class MixinPartial(CallMixin, partial):
+        pass
+
+    class StaticPartial(partial):
+        @staticmethod
+        def __call__(document, *, coordination):
+            calls.append(("static", coordination))
+
+    class ClassPartial(partial):
+        @classmethod
+        def __call__(cls, document, *, coordination):
+            calls.append(("class", coordination))
+
+    callbacks = (MixinPartial(backing), StaticPartial(backing), ClassPartial(backing))
+    for callback in callbacks:
+        validate_document_indexer(callback)
+        callback(object(), coordination=DocumentIndexCoordination.LOCKS_HELD)
+
+    assert [kind for kind, _ in calls] == ["mixin", "static", "class"]
 
 
 def test_partial_and_inherited_partial_subclass_keep_partial_binding_rules():
