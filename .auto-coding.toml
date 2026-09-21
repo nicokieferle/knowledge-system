@@ -1,0 +1,5 @@
+[auto_coding]
+enabled = true
+development_only = true
+required_checks = ["CI / verify"]
+auto_merge = true
