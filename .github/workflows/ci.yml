@@ -27,21 +27,28 @@ jobs:
             ${{ github.actor != '' &&
                 github.triggering_actor != '' &&
                 github.event.sender.login != '' &&
-                github.event.sender.type == 'User' &&
                 github.actor == github.event.sender.login &&
                 github.triggering_actor == github.actor &&
-                !endsWith(github.actor, '[bot]') &&
-                !endsWith(github.triggering_actor, '[bot]') &&
-                ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-                 (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+                ((github.event.sender.type == 'User' &&
+                  !endsWith(github.actor, '[bot]') &&
+                  !endsWith(github.triggering_actor, '[bot]') &&
+                  ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+                   (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+                   (github.event_name == 'pull_request' &&
+                    github.event.pull_request.head.repo.full_name == github.repository &&
+                    github.event.pull_request.user.type == 'User' &&
+                    contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
+                             github.event.pull_request.author_association)))) ||
                  (github.event_name == 'pull_request' &&
+                  github.event.sender.type == 'Bot' &&
+                  github.actor == 'hengsto-auto-coding-runner[bot]' &&
+                  github.event.pull_request.user.login == 'hengsto-auto-coding-runner[bot]' &&
+                  github.event.pull_request.user.type == 'Bot' &&
                   github.event.pull_request.head.repo.full_name == github.repository &&
-                  github.event.pull_request.user.type == 'User' &&
-                  contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'),
-                           github.event.pull_request.author_association))) }}
+                  startsWith(github.event.pull_request.head.ref, 'codex/'))) }}
         run: |
           if [ "$TRUSTED" != true ]; then
-            echo '::error::Fork, bot, or untrusted PR: review and transfer the reviewed changes to a trusted internal branch before CI.'
+            echo '::error::Fork, unapproved bot, or untrusted PR: review and transfer the reviewed changes to a trusted internal branch before CI.'
             echo 'CI blocked before self-hosted scheduling. See docs/CI.md.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
