@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledge-system"
+version = "0.1.0"
+description = "Local-first, Git-backed knowledge retrieval prototype"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "jinja2>=3.1.6,<4",
+    "argon2-cffi>=25.1,<26",
+    "itsdangerous>=2.2,<3",
+    "uvicorn>=0.30,<1",
+    "mcp>=2,<3",
+    "numpy>=1.26,<3",
+    "pgvector>=0.3,<1",
+    "psycopg[binary]>=3.2,<4",
+    "sentence-transformers>=3,<6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27,<1",
+    "pytest>=8,<9",
+    "ruff>=0.9,<1",
+]
+
+[project.scripts]
+knowledge = "knowledge_system.cli:main"
+knowledge-mcp = "knowledge_system.mcp_server:main"
+knowledge-telegram = "knowledge_system.telegram_bot:main"
+knowledge-review = "knowledge_system.review_web:main"
+
+[tool.setuptools.package-data]
+knowledge_system = ["templates/*.html", "static/*.css", "static/*.js"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
