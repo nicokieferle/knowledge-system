@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="eyebrow">Review-Queue</p><h1>Wissensvorschläge <span class="count">{{ result.open_count }} offen</span></h1>
+<p>Ein Vorschlag ist noch kein gespeichertes Wissen.</p>
+<form class="filter" method="get" action="/reviews"><label for="status">Status</label>
+<select id="status" name="status">
+{% for key, label in [('open','Offen und zurückgestellt'),('all','Alle'),('pending','Offen'),('deferred','Zurückgestellt'),('accepted','Akzeptiert'),('rejected','Abgelehnt')] %}
+<option value="{{ key }}" {% if selection == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+</select><button>Filtern</button></form>
+<p>{{ result.total }} Vorschläge · Seite {{ page }}</p>
+<div class="queue">
+{% for item in result.items %}
+<article><div class="meta"><span class="badge {{ item.status }}">{{ labels[item.status] }}</span><time datetime="{{ item.created_at.isoformat() }}">{{ item.created_at.strftime('%d.%m.%Y %H:%M UTC') }}</time></div>
+<h2><a href="/reviews/{{ item.id }}">{{ item.target or 'Ziel noch nicht festgelegt' }}</a></h2>
+<p>{{ item.snippet or 'Ursprüngliche Aussage für diesen älteren Vorschlag nicht verfügbar.' }}</p>
+<small>{% if item.revision_number %}Revision {{ item.revision_number }}{% else %}Noch kein Review{% endif %}</small></article>
+{% else %}<section class="empty"><h2>Hier gibt es gerade nichts zu prüfen.</h2><p>Neue Wissensvorschläge aus Telegram erscheinen hier.</p></section>{% endfor %}
+</div>
+<nav aria-label="Seiten">{% if page > 1 %}<a class="button" href="/reviews?status={{ selection }}&amp;page={{ page-1 }}">Zurück</a>{% endif %}
+{% if has_next %}<a class="button" href="/reviews?status={{ selection }}&amp;page={{ page+1 }}">Weiter</a>{% endif %}</nav>
+{% endblock %}
