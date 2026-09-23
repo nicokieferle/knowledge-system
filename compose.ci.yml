@@ -1,0 +1,43 @@
+# Standalone CI configuration; never merge with the production Compose file.
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.6-pg17-bookworm
+    environment:
+      POSTGRES_USER: knowledge_test
+      POSTGRES_PASSWORD: ci-test-only
+      POSTGRES_DB: knowledge_v32_test
+    labels:
+      # Existing archive/restore test verifies this label and the project prefix.
+      codex.task: v32-review
+    ports:
+      - target: 5432
+        host_ip: 127.0.0.1
+        protocol: tcp
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    cpus: 1.0
+    mem_limit: 1g
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  smoke:
+    image: ${CI_IMAGE:?Set CI_IMAGE to the image built by CI}
+    environment:
+      TEST_DATABASE_URL: postgresql://knowledge_test:ci-test-only@postgres:5432/knowledge_ci_smoke
+      V30_SMOKE_CONFIRM: isolated-v30-smoke-database
+      KNOWLEDGE_ROOT: /app/knowledge
+      EMBEDDING_DIMENSIONS: '384'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: [python, /app/scripts/conversation_postgres_smoke.py]
+    cpus: 2.0
+    mem_limit: 2g
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  postgres_data:
