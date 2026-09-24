@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Anmelden{% endblock %}
+{% block content %}
+<section class="login"><p class="eyebrow">Privater Zugang</p><h1>Vorschläge in Ruhe prüfen.</h1>
+<p>Telegram sammelt. Hier prüfst und entscheidest du.</p>
+{% if development %}<p class="warning">Expliziter Test-/Entwicklungsmodus. Nicht für Production.</p>{% endif %}
+{% if failed %}<p role="alert" class="warning">Anmeldung fehlgeschlagen.</p>{% endif %}
+<form action="/login" method="post">
+<input type="hidden" name="csrf" value="{{ session.csrf }}">
+<input type="hidden" name="next" value="{{ next }}">
+<label for="password">Administrator-Passwort</label>
+<input id="password" name="password" type="password" maxlength="1024" autocomplete="current-password" required>
+<button class="primary">Anmelden</button></form></section>
+{% endblock %}
