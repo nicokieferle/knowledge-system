@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Wissensvorschläge{% endblock %} · Knowledge System</title>
+  <link rel="stylesheet" href="/static/review.css">
+  <script src="/static/review.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Zum Inhalt</a>
+<header><a href="/reviews">Knowledge System <span>Private Review-Konsole</span></a>
+{% if session and session.authenticated %}
+<form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ session.csrf }}"><button>Abmelden</button></form>
+{% endif %}</header>
+<main id="main">{% block content %}{% endblock %}</main>
+<footer>Akzeptieren bestätigt nur diese Revision. Keine Änderung an Markdown, Git oder Index.</footer>
+</body></html>
