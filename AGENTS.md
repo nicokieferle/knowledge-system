@@ -1,7 +1,7 @@
 # Arbeitsregeln für Knowledge-System
 
-Basis: Repository Standard **1.4** · Übernommen: **27. September 2026**.
-Referenz: [Hengsto/repository-template, verbindliche Revision](https://github.com/Hengsto/repository-template/blob/7a8029acc101f54c3b5905c5182208b9f5f1fe42/REPOSITORY_STANDARD.md).
+Basis: Repository Standard **1.5** · Übernommen: **27. September 2026**.
+Referenz: [Hengsto/repository-template, verbindliche Revision](https://github.com/Hengsto/repository-template/blob/09bcc83d2ecc132823e9484e5c075b9e0db970f2/REPOSITORY_STANDARD.md).
 Die folgenden Projektregeln gelten eigenständig; spätere Standardversionen werden
 bewusst übernommen.
 
@@ -64,6 +64,10 @@ bewusst übernommen.
 - Funktionale Änderungen benötigen Kern- und erforderliche Bereichsprüfungen gemäß
   [CI-Dokumentation](docs/CI.md#prüfauswahl-und-nachweise). Reine Markdown-Änderungen
   benötigen Link-, Konsistenz- und Diff-Prüfung, keinen pauschalen Volltest.
+- Integrations-/E2E-Nachweise nennen reale Komponenten, Testersatz und ungeprüfte Grenzen.
+  Bei Artefaktänderungen Build und risikogerechte Prüfung des erzeugten Images gemäß
+  [Test- und Artefaktgrenzen](docs/CI.md#test--und-artefaktgrenzen) nachweisen;
+  Build-Erfolg allein belegt keine Nutzbarkeit oder vollständige Live-Funktion.
 - Für jede relevante Prüfung Befehl, Umgebung, Commit samt etwaigen uncommitteten
   Änderungen, Ergebnis und Beleg im PR festhalten. Lokaler Erfolg ersetzt keine CI;
   erforderliche Checks müssen zum maßgeblichen aktuellen PR-Stand gehören.

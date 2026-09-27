@@ -35,6 +35,60 @@ und `auto_merge = true`. Das belegt weder die effektive Controller-Policy noch e
 es einem Agenten eigenständig Auto-Merge. Diese Konfiguration bleibt von den hier
 dokumentierten Prüfpflichten und den konkreten Befugnissen eines Auftrags getrennt.
 
+## Test- und Artefaktgrenzen
+
+Integrations- und End-to-End-Nachweise nennen die tatsächlich gemeinsam geprüften
+Komponenten, jeden relevanten Ersatz und die nicht geprüften Grenzen. Ein Mock darf
+nicht gerade das Zusammenspiel ersetzen, das der Nachweis behauptet.
+
+- Unit-/lokale Protokolltests verwenden je Test synthetische Daten, Fake-Stores,
+  Provider oder Testclients. Sie beweisen keine echte Telegram-, Modell- oder
+  produktive Datenbankintegration. Die Ersatzkomponenten im konkreten Test benennen.
+- `tests/integration` verbindet die jeweiligen echten Python-Stores/Services mit
+  isoliertem PostgreSQL/pgvector. Archive-/Restore-Tests verwenden das eigene
+  Compose-Testprojekt; das ist kein Backup-/Restore-Nachweis für Produktionsdaten.
+  Ersetzte Retrieval-/Modellkomponenten bleiben im jeweiligen Nachweis sichtbar.
+- `scripts/conversation_postgres_smoke.py` läuft im **gerade gebauten Image** als
+  dessen Benutzer gegen die isolierte Datenbank aus `compose.ci.yml`. Echte
+  Conversation-/Proposal-/Client-State-Stores, Memory und Service arbeiten zusammen.
+  Retriever, Chatmodell, Intent-Klassifikation, Summarizer und Proposal-Generator
+  sind synthetische Ersatzkomponenten. Der Smoke prüft Paketimporte, Datenbankzugriff
+  und diese Anwendungspfade im Image; er startet weder einen echten Telegram-Client
+  noch einen Modellaufruf oder den produktiven MCP-/Browser-End-to-End-Ablauf.
+- Reale Client-/Provider-, Modell- oder Zielhost-Smokes benötigen einen passenden
+  gesonderten Auftrag und isolierte Ressourcen. Fehlende Live-Nachweise ausdrücklich
+  nennen; bestandene Teiltests belegen keine umfassende Live-Funktionsfähigkeit.
+
+### Auswahl von Build und Image-Prüfung
+
+Änderungen an `src/`, mitkopierten Skripten, `pyproject.toml`, Abhängigkeiten,
+Dockerfile, Basisimage, `.dockerignore` oder Build-Erzeugung benötigen einen Build
+am maßgeblichen Stand. Dafür die vorhandene [lokale Reproduktion](#lokale-reproduktion)
+mit `bash scripts/ci.sh build` verwenden. Bei Änderungen an ausführbaren Paket-/Image-
+Inhalten, Abhängigkeiten, Benutzer/Rechten, Startverhalten oder Persistenz zusätzlich
+`bash scripts/ci.sh smoke` mit genau diesem Image ausführen. Die benötigten isolierten
+Services zuvor wie dokumentiert starten und anschließend projektgebunden bereinigen.
+Bei geänderten EntryPoints, MCP-/Browser-Start oder spezifischen Funktionen reicht der
+Conversation-Smoke allein nicht: die betroffene Start-/Funktion im erzeugten Image
+gezielt prüfen, beziehungsweise fehlende Abdeckung als konkrete Nachweislücke nennen.
+Die CI automatisiert bislang keinen vollständigen echten Client-/Modell-E2E-Test.
+
+Der Nachweis nennt Commit plus lokalen Diff, Buildumgebung, tatsächliche aufgelöste
+Abhängigkeiten, laufbezogenen Image-Tag und Image-ID/Digest sowie Build-/Smoke-Ergebnis.
+Die vorhandenen `build.log`, `smoke.log` und weiteren Reports dem Lauf zuordnen.
+Falls die Image-ID dort nicht explizit erfasst ist, am erzeugten Image mit
+`docker image inspect --format '{{.Id}}' "$CI_IMAGE"` separat feststellen und im
+Prüfnachweis festhalten; ein Tag allein kann überschrieben werden. Build-Erfolg und
+Nutzbarkeitsprüfung bleiben getrennte Aussagen, ebenso Quelltests und Image-Tests.
+
+**Reine Markdown-Änderungen verlangen lokal keinen neuen Artefakt-Build oder
+Image-Smoke.** README.md wird zwar durch das Dockerfile mitkopiert und als
+Paketbeschreibung verwendet; rein redaktionelle Änderungen daran sind durch die
+Dokumentationsprüfung abgedeckt, kein Nachweis eines unveränderten Image-Digests.
+Ändert Markdown funktional Build-Eingaben oder deren Verarbeitung, greift dagegen
+die Build-Regel. Die unveränderte PR-CI hat keinen Markdown-Pfadfilter und führt
+weiterhin Build und Image-Smoke aus, auch für diesen Dokumentationsrefactor.
+
 ## Ablauf und Vertrauensgrenze
 
 `.github/workflows/ci.yml` prüft PRs gegen `main`, Pushes auf `main` und manuelle
