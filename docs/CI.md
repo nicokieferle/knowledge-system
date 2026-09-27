@@ -76,14 +76,18 @@ Die CI automatisiert bislang keinen vollständigen echten Client-/Modell-E2E-Tes
 Der Nachweis nennt Commit plus lokalen Diff, Buildumgebung, tatsächliche aufgelöste
 Abhängigkeiten, laufbezogenen Image-Tag und Image-ID/Digest sowie Build-/Smoke-Ergebnis.
 Die vorhandenen `build.log`, `smoke.log` und weiteren Reports dem Lauf zuordnen.
+`dependencies.txt` aus `scripts/ci.sh install` erfasst die Host-Virtualenv, nicht
+die Installation im Image; dessen aufgelöste Abhängigkeiten separat am erzeugten
+Image erfassen. Host- und Image-Nachweise entsprechend kennzeichnen.
 Falls die Image-ID dort nicht explizit erfasst ist, am erzeugten Image mit
-`docker image inspect --format '{{.Id}}' "$CI_IMAGE"` separat feststellen und im
-Prüfnachweis festhalten; ein Tag allein kann überschrieben werden. Build-Erfolg und
+`docker image inspect --format '{{.Id}}' "$CI_IMAGE"` vor dem Cleanup separat
+feststellen und im Prüfnachweis festhalten. Cleanup entfernt den laufbezogenen
+Image-Tag; ein Tag allein kann überschrieben werden. Build-Erfolg und
 Nutzbarkeitsprüfung bleiben getrennte Aussagen, ebenso Quelltests und Image-Tests.
 
 **Reine Markdown-Änderungen verlangen lokal keinen neuen Artefakt-Build oder
-Image-Smoke.** README.md wird zwar durch das Dockerfile mitkopiert und als
-Paketbeschreibung verwendet; rein redaktionelle Änderungen daran sind durch die
+Image-Smoke.** README.md wird zwar durch das Dockerfile ins Image kopiert;
+rein redaktionelle Änderungen daran sind durch die
 Dokumentationsprüfung abgedeckt, kein Nachweis eines unveränderten Image-Digests.
 Ändert Markdown funktional Build-Eingaben oder deren Verarbeitung, greift dagegen
 die Build-Regel. Die unveränderte PR-CI hat keinen Markdown-Pfadfilter und führt

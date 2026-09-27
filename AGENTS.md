@@ -65,7 +65,7 @@ bewusst übernommen.
   [CI-Dokumentation](docs/CI.md#prüfauswahl-und-nachweise). Reine Markdown-Änderungen
   benötigen Link-, Konsistenz- und Diff-Prüfung, keinen pauschalen Volltest.
 - Integrations-/E2E-Nachweise nennen reale Komponenten, Testersatz und ungeprüfte Grenzen.
-  Bei Artefaktänderungen Build und risikogerechte Prüfung des erzeugten Images gemäß
+  Bei Artefaktänderungen Build und risikogerechte Prüfung des erzeugten Artefakts gemäß
   [Test- und Artefaktgrenzen](docs/CI.md#test--und-artefaktgrenzen) nachweisen;
   Build-Erfolg allein belegt keine Nutzbarkeit oder vollständige Live-Funktion.
 - Für jede relevante Prüfung Befehl, Umgebung, Commit samt etwaigen uncommitteten
