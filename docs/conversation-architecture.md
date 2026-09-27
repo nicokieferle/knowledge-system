@@ -1,187 +1,178 @@
-# Conversation architecture
+# Architektur und Systemgrenzen
 
-## V3.3 apply boundary
+Diese Datei beschreibt den implementierten Aufbau bis V3.3. Dauerhafte Produktziele
+stehen in [REQUIREMENTS.md](../REQUIREMENTS.md), Phasen und historische Nachweise in
+[ROADMAP.md](../ROADMAP.md). Ein Implementierungsvertrag belegt kein Deployment.
 
-`review-web -> ProposalApplyService -> proposal_applies / SecureKnowledgeWriter /
-index_document` is the only write path. Accept & Apply commits the immutable accepted
-revision and the apply intent in one PostgreSQL transaction, then performs the separate
-filesystem and index phases. The journal binds proposal, accepted review, logical target,
-old/absent basis, new hash and actor. Successful apply/index states are terminal; attempts,
-safe error classes and timestamps remain durable.
+## Verantwortlichkeiten und Datenfluss
 
-The three resources cannot form one global transaction. A retry before the rename sees the
-old basis; a retry after a completed rename recognizes the exact expected new hash and
-finishes idempotently. Any third state is a conflict and is preserved. Index failure leaves
-the file applied and exposes a separate retry. Document indexing deletes and inserts only
-the applied `(source_id, source_path)` inside one PostgreSQL transaction, so readers see the
-complete old or new chunk set. Apply and index use one database advisory lock namespace per
-normalized path as well as row locks.
-
-An accepted conflict is never rebound or rewritten. „Refresh review“ atomically records one
-owned successor proposal plus a control audit message, then uses the normal safe snapshot
-path to prepare its first immutable revision. The original decision/apply conflict remains
-unchanged. A double submit reuses that successor.
-
-Telegram still reaches only proposal creation and cannot decide, apply, refresh a conflict
-or retry indexing. MCP still exports only read operations.
-
-## V3.2.1 client boundary (supersedes historical Telegram review below)
-
-`TelegramAdapter -> ConversationService -> ProposalService` collects pending proposals.
-`review-web -> ProposalReviewService -> PostgresReviewStore / GitMarkdownSource` is
-the only review/decision client. Telegram never constructs a review service. Legacy
-rv:/pv: callbacks are information-only before ID parsing or domain dispatch.
-
-The web principal maps explicitly to the full existing client identity tuple. Queue
-and provenance queries enforce that tuple, independent of active/recent topic limits.
-Existing originating_message_ids load user messages inside the owned conversation;
-no new durable table or migration is needed. See `v321-browser-review.md`.
-
-## Boundary
-
-V3.0 adds persistent conversation and proposal intent handling without coupling the core to
-a messenger or LLM vendor:
+| Bereich | Implementierung | Vertrag und Prüfung |
+| --- | --- | --- |
+| Suche und Originalquellen | [service.py](../src/knowledge_system/service.py), [sources.py](../src/knowledge_system/sources.py) | `KnowledgeService`, registrierte `SourceAdapter`, logische Quell-IDs/-Pfade; [Servicetests](../tests/test_service.py), [Quelltests](../tests/test_sources.py) |
+| Index und Retrieval | [indexer.py](../src/knowledge_system/indexer.py), [search.py](../src/knowledge_system/search.py), [reranker.py](../src/knowledge_system/reranker.py) | Reproduzierbare Ableitungen; [lokale Evaluation](local-development.md#retrieval-evaluation) |
+| Lesende Clients | [cli.py](../src/knowledge_system/cli.py), [mcp_server.py](../src/knowledge_system/mcp_server.py) | CLI ruft den Service direkt auf; MCP bietet nur `search_knowledge` und `get_document`; [MCP-Tests](../tests/test_mcp_server.py) |
+| Gespräch und Vorschläge | [conversation_service.py](../src/knowledge_system/conversation_service.py), [conversation_memory.py](../src/knowledge_system/conversation_memory.py), [proposal_service.py](../src/knowledge_system/proposal_service.py) | Nachrichten, Zusammenfassungen, Intent und Proposals; [Gesprächstests](../tests/test_conversation_service.py), [Memory-Tests](../tests/test_conversation_memory.py) |
+| Routing und Integrationen | [conversation_router.py](../src/knowledge_system/conversation_router.py), [telegram_adapter.py](../src/knowledge_system/telegram_adapter.py), [llm_provider.py](../src/knowledge_system/llm_provider.py) | Client-/Provideradapter an Domänengrenzen; [Routingtests](../tests/test_conversation_router.py), [Providertests](../tests/test_llm_provider.py) |
+| Review und Identität | [proposal_review.py](../src/knowledge_system/proposal_review.py), [review_store.py](../src/knowledge_system/review_store.py), [review_auth.py](../src/knowledge_system/review_auth.py), [review_web.py](../src/knowledge_system/review_web.py) | Unveränderliche Revisionen, Auth, Ownership, CSRF; [Browser-Design](v321-browser-review.md), [Webtests](../tests/test_review_web.py) |
+| Apply und Wiederholung | [proposal_apply.py](../src/knowledge_system/proposal_apply.py), [knowledge_apply.py](../src/knowledge_system/knowledge_apply.py), [index_coordination.py](../src/knowledge_system/index_coordination.py) | Revisionsgebundene Bytes und Journal; [V3.3-Vertrag](v33-design.md), [Integrationstests](../tests/integration/test_proposal_apply_postgres.py) |
 
 ```text
-Telegram ----+
-Web UI ------+--> ConversationService
-Other client-+          |
-                        +--> ConversationStore (durable raw messages)
-                        +--> ConversationMemory (durable rolling summary)
-                        +--> ChatModel protocol
-                        +--> KnowledgeRetriever protocol --> KnowledgeService
-                        `--> ProposalService (durable pending records)
+Telegram Long Polling -> TelegramAdapter -> ConversationRouter -> ConversationService
+                                                              |-> ConversationMemory
+                                                              |-> KnowledgeService
+                                                              |-> LLM-Protokolle
+                                                              `-> ProposalService
+Browser -> ProposalReviewService -> ProposalApplyService
+                                   |-> SecureKnowledgeWriter -> Markdown
+                                   `-> index_document -> abgeleiteter Index
+CLI / MCP -> KnowledgeService -> Retrieval / SourceAdapter -> Originalquellen
 ```
 
-Telegram is a thin V3.1 adapter. Generic `client_type`, external conversation IDs and
-external message IDs preserve client references without putting Telegram concepts into core
-logic. A different client can reopen the same server-side conversation if its adapter maps to
-the same conversation ID.
+Der vorhandene Gesprächskern unterstützt Wissensaufnahme und Retrieval. Langfristig
+liegen allgemeine Assistenz, Orchestrierung, Dialogführung und Oberflächen bei Haley,
+einschließlich dessen Windows-Client. Eine Herauslösung vorhandener Module ist damit
+nicht beschlossen oder implementiert. Journaling bleibt externe Quelle/Client;
+Telegram und Browser sind vorhandene Adapter. Neue Clients benötigen künftig definierte,
+authentifizierte Integrationsverträge; sie erhalten keinen direkten Datenbank- oder
+Dateisystemweg um den Review-/Apply-Vertrag herum.
 
-Real LLM implementations are injected behind `ChatModel`, `ConversationSummarizer`,
-`IntentClassifier` and `ProposalGenerator`. The core has no provider SDK, key or network call.
-Unit tests use deterministic fakes.
+## Datenklassen und kanonische Quelle
 
-## Three data classes
+1. **Kanonisches Wissen:** überprüftes Markdown mit Git-Historie. Im bisherigen
+   Repository liegt es unter `knowledge/`; V3.3-Server-Compose verlangt einen separat
+   konfigurierten persistenten Root. Geplant ist ein eigenes privates Daten-Repository.
+   [Zielprofil und aktueller Konfigurationsstand](DEPLOYMENT_DEBIAN.md#zielkonvention-und-bestehende-konfiguration)
+   unterscheiden diese Zustände; keine Datenmigration ist durch Dokumentation erfolgt.
+2. **Dauerhafter Anwendungszustand:** vollständige rohe User-/Assistant-/Systemnachrichten,
+   Zusammenfassungen, Vorschlags- und Reviewdaten, Entscheidungen und Apply-Journal.
+   Gesprächshistorie ist Auditkontext, nicht automatisch kanonisches Wissen.
+3. **Reproduzierbare Ableitungen:** `chunks`, Retrieval-Indizes und `index_metadata`,
+   Embeddings und Modellcache. Sie dürfen aus Originalquellen neu aufgebaut werden.
 
-Raw conversation history is the complete persisted user, assistant and system message stream.
-It is audit history and is never automatically canonical knowledge.
+Zusammenfassungen unterstützen den Modellkontext, löschen aber keine Originalnachrichten.
+Auch wenn sie ableitbar sind, zählen sie im bestehenden Betrieb zum dauerhaft gesicherten
+Gesprächszustand. PostgreSQL enthält beide Datenklassen; sein gesamtes Datenvolume ist
+kein löschbarer Suchcache. Die elf dauerhaften Tabellen sind zentral in
+[durable_tables.sh](../scripts/durable_tables.sh) aufgeführt: `conversations`, `messages`,
+`conversation_summaries`, `proposal_suggestions`, `proposals`, `client_states`,
+`client_conversations`, `client_message_bindings`, `proposal_reviews`,
+`proposal_decisions` und `proposal_applies`.
 
-Conversation memory is a rolling summary plus full recent messages. It helps a model retain
-longer context, but remains conversation state rather than canonical knowledge. Original
-messages are never deleted when a summary is created.
+`knowledge index` verändert keine dauerhaften Tabellen. `knowledge init-db` verwendet
+additive Initialisierung und benannte Migrationen; es setzt bestehende Daten nicht zurück.
+Backup/Restore muss zusätzlich zum Datenbankzustand den kanonischen Markdown-/Git-Bestand
+berücksichtigen. Verfahren und historische Nachweise stehen in der
+[Betriebsdokumentation](DEPLOYMENT_DEBIAN.md#durable-state-backup).
 
-Curated knowledge remains the reviewed Markdown under `knowledge/`. Retrieval results are
-read through `KnowledgeService`; the ConversationService calls its injected narrow search
-boundary directly, never via MCP or HTTP. A proposal is only a pending suggestion and cannot
-write Markdown or Git.
+## Gesprächskontext und Modellgrenzen
 
-## Memory invariants
+`ConversationService` ruft `KnowledgeService` über die injizierte schmale Retrieval-
+Schnittstelle direkt auf, nicht über MCP/HTTP. Quell-IDs bleiben für spätere Adapter
+erhalten. `ChatModel`, `ConversationSummarizer`, `IntentClassifier`, `ProposalGenerator`
+und `ConversationRoutingModel` sind Protokolle. Der Kern enthält kein Provider-SDK,
+keinen Schlüssel und keinen eigenen Provider-Netzwerkaufruf; reale Aufrufe liegen im
+OpenAI-kompatiblen Adapter. Tests setzen deterministische Fakes ein.
 
-The default policy keeps 12 recent messages and starts compaction after 30 unsummarized
-messages. Tests can inject smaller values. When compaction begins, the store first returns an
-immutable ordered message batch. Its last ID is the exact snapshot boundary passed to the
-compare-and-set write. Messages arriving while the summarizer runs are therefore not marked
-as summarized. A summary version prevents concurrent workers from overwriting a winner with
-stale output.
+Die Memory-Policy behält standardmäßig zwölf aktuelle Nachrichten und beginnt nach
+30 nicht zusammengefassten Nachrichten mit Kompaktierung. Ein unveränderlicher,
+geordneter Nachrichten-Snapshot liefert die exakte letzte ID für Compare-and-set.
+Während der Zusammenfassung eintreffende Nachrichten gelten dadurch nicht als bereits
+zusammengefasst. Eine Versionsprüfung verhindert, dass ein konkurrierender Worker eine
+neuere Zusammenfassung durch veraltete Ausgabe ersetzt.
 
-`ConversationContext.recent_messages` always excludes `current_user_message`. The current
-message consequently occurs exactly once in LLM context. Remaining messages after the summary
-boundary are kept in full, so no unsummarized gap exists between summary and recent context.
-If a concurrent worker has already advanced the shared summary through or beyond an older
-request's current message, that request ignores the newer summary and reconstructs its context
-from durable raw messages before its own immutable boundary.
+`ConversationContext.recent_messages` schließt `current_user_message` aus; die aktuelle
+Nachricht erscheint genau einmal im Modellkontext. Alle Nachrichten nach der
+Zusammenfassungsgrenze bleiben erhalten. Liegt eine konkurrierende Zusammenfassung
+bereits an oder hinter der Grenze eines älteren Requests, rekonstruiert dieser seinen
+Kontext aus den ursprünglichen Nachrichten vor seiner eigenen Snapshotgrenze.
 
-## Proposal mechanisms
+## Clientidentität und Themenrouting
 
-1. `/remember` and `/propose` bypass semantic intent classification and create one pending
-   proposal from the relevant prior conversation context.
-2. `CREATE_PROPOSAL` from the injected semantic classifier creates the same pending record.
-3. `SUGGEST_PROPOSAL` creates only a persistent pending suggestion and a confirmation request.
-   Explicit confirmation creates the proposal; rejection creates none.
+Telegram übersetzt Updates, IDs, Kommandos und Antworten. Der Adapter besitzt weder
+SQL-, Memory-, Retrieval-, Proposal-Generierungs- noch Promptlogik. Generische
+`client_type`, externe Chat-/User-IDs und Nachrichten-IDs erhalten die Clientreferenz.
+Ein anderer Adapter kann denselben serverseitigen Gesprächskontext verwenden, sofern
+dessen autorisierte Zuordnung dieselbe Gesprächs-ID ergibt; daraus folgt kein
+bereits vorhandener allgemeiner Netzwerkzugang für weitere Clients.
 
-Commands and confirmation messages are persisted for auditability, but remain control input.
-The proposal records their `trigger_message_id` separately from `originating_message_ids`, and
-`ProposalGenerator` receives only the relevant originating messages. A confirmed suggestion
-has a stable unique `source_suggestion_id`. PostgreSQL locks the pending suggestion and writes
-the proposal plus the `confirmed` transition in one transaction, making retries idempotent.
+`client_states` speichert das aktive Thema pro vollständigem Identitätstupel.
+`client_conversations` dokumentiert Ownership, `client_message_bindings` bindet
+Wiederholungen an das ursprüngliche Thema. PostgreSQL-Advisory-Locks serialisieren
+Aktivthemenwechsel. Der Router sieht höchstens 20 jüngste eigene Themen mit ID,
+Titel, Zusammenfassungsfeld, Aktivität und Aktivmarkierung, nicht deren vollständige
+Verläufe. Nur eigene, angebotene, nicht archivierte Themen sind Wechselziele.
+Ungültige Ziel-IDs führen zu einem neuen isolierten Thema. `/new`, `/topics` und
+`/switch` umgehen Modellrouting. Memory bleibt pro Gespräch getrennt.
 
-## Persistence and operations
+Nach dauerhafter Bindung beziehungsweise gespeichertem Ergebnis spielen serielle
+Retries dieses wieder ab. Vor Commit der Bindung bleiben zusätzliche ungenutzte
+Themen möglich; Telegram-Zustellung bleibt at-least-once und permanente Fehler können
+den einzelnen Poller blockieren. Keine globale Exactly-once-Zusage. Bestätigte Ursachen,
+Regressionen und Grenzen: [V3.1.1](v311-telegram-hotfix.md),
+[abschließende lokale Reviewgeschichte](v311-final-local-review.md) und
+[V3.1.2](v312-routing-hotfix.md).
 
-The PostgreSQL instance now contains two categories with different operational guarantees:
+## Vom Vorschlag zum Review
 
-- Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
-- Durable and backup-relevant: `conversations`, `messages`, `conversation_summaries`,
-  `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
-  `client_message_bindings`, `proposal_reviews`, `proposal_decisions` and
-  `proposal_applies`.
+`/remember` und `/propose` umgehen die semantische Intentklassifikation und erzeugen
+Proposals aus relevantem vorherigem Kontext. `CREATE_PROPOSAL` führt zum gleichen
+Ergebnis. `SUGGEST_PROPOSAL` erzeugt zunächst nur eine dauerhafte Nachfrage;
+ausdrückliche Bestätigung erzeugt den Proposal, Ablehnung keinen.
+Kontrollnachrichten bleiben für Audit erhalten; `trigger_message_id` ist von
+`originating_message_ids` getrennt. Der Generator erhält nur die relevanten
+Ursprungsnachrichten. Eine eindeutige `source_suggestion_id` sowie Zeilensperre und
+gemeinsame Transaktion binden Bestätigung und Proposal atomar/idempotent.
 
-`knowledge index` is scoped to chunk tables. `knowledge init-db` uses additive `IF NOT EXISTS`
-DDL and preserves durable rows. An index rebuild or reset must never drop, truncate or delete
-durable tables. Deleting the PostgreSQL Docker volume is no longer a safe index-reset procedure
-once conversations exist; operations need a database backup and restore plan.
+Ein Proposal ist ein unvertrauenswürdiger Entwurf. Die Review-Revision bindet dagegen
+Ziel, verifizierte Basis, alte/neue Bytes, Hashes und vollständigen Diff unveränderlich.
+Vorbereitung verwendet ausschließlich den sicheren `GitMarkdownSource.snapshot`;
+eine vom Generator gelieferte Basis ist nicht maßgeblich. Entscheidungen prüfen das
+vollständige Ownership-Tupel unter Sperre. `pending`/`deferred` können entschieden
+werden, `accepted`/`rejected` sind terminal. Wiederholungen derselben Aktion/Revision
+sind idempotent; widersprüchliche oder überholte Entscheidungen scheitern.
+Deferral öffnet keinen neuen `pending`-Zustand. DB-Trigger schützen Revisionen und Audit.
 
-## Future adapters
+Seit V3.2.1 ist der Browser der einzige Review-/Entscheidungsclient. GET liest nur,
+Vorbereitung und Mutationen erfolgen per authentifiziertem, CSRF-geschütztem POST.
+Der serverseitig konfigurierte Principal entspricht dem gesamten Clienttupel;
+Queue/Provenienz gelten für alle eigenen Gespräche, unabhängig vom 20-Themen-Routerlimit.
+Ursprungsnachrichten werden nur innerhalb des eigenen Proposal-Gesprächs geladen.
+Fehlende historische Provenienz wird angezeigt, nicht erfunden oder automatisch in
+Markdown übernommen. Telegram konstruiert keinen Review-Service; alte `rv:`-/`pv:`-
+Callbacks bleiben schon vor ID-Auswertung oder Domänenaufruf wirkungslos.
 
-The Telegram adapter translates updates into `ConversationService` calls and renders the
-structured `ConversationTurnResult`; it does not own history or intent state. The real LLM
-provider implements the four existing protocols. Proposal review and approval are the
-V3.2 stage. V3.3 adds the separately guarded file/index phases, but never performs Git
-commits or pushes.
+Die frühere Telegram-Diff-Zustellung mit 3000-UTF-16-Grenze und separater `.diff`-Datei
+ist als abgelöstes Clientdesign in [V3.2](v32-review-design.md) erhalten. Dessen
+Domänenentscheidungen bleiben nachvollziehbar; die maßgebliche Oberfläche steht im
+[Browser-Design](v321-browser-review.md). Dies sind keine parallelen aktuellen Clients.
 
-## V3.2 review boundary
+## Apply und Indexierung
 
-`TelegramReview -> ProposalReviewService -> ReviewStore / ReviewSource` is independent
-of conversation generation. A suggestion asks whether to generate a proposal; it is
-not consent to modify knowledge. A proposal is the untrusted draft. A review revision
-is the immutable concrete target/base/old/new/hash/diff that can be accepted.
+Der einzige Schreibpfad ist `review-web -> ProposalApplyService -> SecureKnowledgeWriter`.
+**Accept & Apply** bindet Entscheidung, akzeptierte unveränderliche Revision und
+Apply-Intent in einer PostgreSQL-Transaktion. Erst anschließend erfolgen die getrennten
+Datei- und Indexphasen. Ein früher akzeptierter Datensatz benötigt weiterhin die
+explizite Aktion **Apply accepted revision**. Reject/Defer schreiben kein Wissen.
 
-Preparation reads only `GitMarkdownSource.snapshot`. The draft's base is ignored.
-`pending -> accepted/rejected/deferred`, `deferred -> accepted/rejected` are supported;
-accepted/rejected are terminal. Identical action+revision retries reuse the decision;
-contradictory or superseded callbacks fail. Deferral does not reopen to pending.
+Das Journal bindet Proposal, Review, Ziel, alte/fehlende Basis, neuen Hash und Actor;
+Versuche, sichere Fehlerklassen und Zeitpunkte bleiben erhalten. Es gibt keine globale
+Transaktion über PostgreSQL, Dateisystem und Index. Vor Rename prüft ein Retry die
+alte Basis; danach kann er die exakten erwarteten neuen Bytes erkennen und die
+Dauerhaftigkeit verifizieren. Ein dritter Zustand bleibt Konflikt. Ein Indexfehler
+lässt die erfolgreich geschriebene Datei bestehen und erhält einen eigenen Retry.
 
-The store locks the proposal and verifies the full client ownership relation under
-the same transaction. Preparing revisions is compare-and-set against the prior
-review ID. Decisions atomically append audit records and update status/accepted ID.
-Revision and decision rows are immutable in the application and via DB triggers;
-terminal proposal rows cannot be changed except for identical idempotency no-ops.
+Dokumentindexierung ersetzt nur die Chunks von `(source_id, source_path)` in einer
+Transaktion. Vollindex, Apply und Dokumentindex verwenden koordinierte globale,
+dokumentbezogene und bei Dateischreibzugriffen zusätzliche Elternverzeichnis-Sperren.
+Die exakten Linux-/Dateisystem-, Hash-, Lock- und Callback-Verträge sind im
+[V3.3-Design](v33-design.md) maßgeblich beschrieben.
 
-V3.3 must use the accepted revision's full new content, not the draft or new LLM
-output. `check_basis` detects changed bytes or create-target appearance. It is a
-read-time check, not a cross-filesystem/DB lock; V3.3 must recheck during atomic apply.
-Accept itself has no Git, file-write, retrieval-index or MCP dependency.
+Ein akzeptierter Konflikt wird niemals umgebunden oder überschrieben. **Refresh review**
+erzeugt atomar einen eigenen Nachfolgeproposal samt Kontroll-Auditnachricht und erhält
+Ziel und Inhalt der freigegebenen Revision. Wiederholungen verwenden denselben
+Nachfolger; die ursprüngliche Entscheidung bleibt unverändert. Telegram und MCP
+können weder Apply noch Konflikt-Refresh oder Index-Retry auslösen.
 
-Telegram sends a compact summary first. A diff fitting, with its header, into 3000
-UTF-16 units is sent inline; a larger diff is one exact UTF-8 `.diff` document.
-Revision buttons are sent only after successful complete transfer. At-least-once
-delivery can duplicate a document on retry, but preparation remains idempotent and
-does not add a review revision or decision.
-# V3.1 client and routing layer
-
-```text
-Telegram long polling -> TelegramAdapter -> ConversationRouter -> ConversationService
-                                                               -> ConversationMemory
-                                                               -> KnowledgeService
-                                                               -> provider-neutral LLM ports
-                                                               -> ProposalService -> PostgreSQL
-```
-
-Telegram parses updates, maps IDs, handles commands/callbacks and formats replies. It has
-no SQL, memory, retrieval, proposal-generation, or prompt logic. Generic `client_states`
-stores the active conversation per `(client_type, external_chat_id, external_user_id)`;
-`client_conversations` records ownership and `client_message_bindings` makes Telegram
-message retries stay attached to their original topic. PostgreSQL advisory locking
-serializes active-topic changes.
-
-The router supplies the model with at most 20 recently active owned conversations, never
-their complete histories. A switch target is accepted only if it is among those owned,
-non-archived candidates. Invalid model IDs fail closed by creating an isolated topic.
-Manual commands bypass routing entirely.
-
-Each conversation's memory builder retains the V3.0 snapshot boundary and exactly-once
-current-user-message invariant, so investment content cannot enter a Knowledge-System
-topic merely because both came from one Telegram chat. Memory is not canonical knowledge.
-Suggestions are durable pending actions; inline callbacks carry only action + UUID and the
-proposal store performs ownership, status, and idempotency checks. A pending proposal is
-still not a knowledge or Git write.
+Die Anwendung commitet oder pusht kein Git. Apply kann einen dedizierten Datencheckout
+verändern; dessen Review/Versionierung bleibt Operator-Aufgabe. Die Migration auf das
+getrennte private Daten-Repository und das Zielprofil ist eine gesonderte Betriebsphase.

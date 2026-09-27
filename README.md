@@ -1,310 +1,89 @@
-# Knowledge System
+# Knowledge-System
 
-CI für Pull Requests und `main`: [Pipeline, lokale Prüfung und Wartung](docs/CI.md).
+Das Knowledge-System nimmt Wissen auf, speichert es nachvollziehbar und macht es
+durch Suche und Retrieval nutzbar. Es unterstützt Vorschläge, menschliches Review
+und kontrolliertes Apply. Das Produkt wird persönlich und selbst gehostet genutzt.
+Menschenlesbares Markdown mit Git-Historie ist die kanonische Wissensquelle.
 
-## V3.3: Revisionsgebundenes Apply und dokumentbezogene Indexierung
+## Orientierung
 
-Die private Browserkonsole bietet für neue Vorschläge **Accept & Apply**. Die
-akzeptierte immutable Review-Revision wird zuerst zusammen mit einem dauerhaften
-Apply-Intent in PostgreSQL gebunden. Erst danach prüft der Linux-Dateischreiber die
-aktuelle Basis descriptor-relativ erneut, ersetzt exakt die freigegebenen UTF-8-Bytes
-atomar und indexiert nur dieses erneut gelesene Dokument. Konflikte überschreiben
-nichts; Apply und Indexierung haben getrennte, idempotent wiederholbare Zustände.
+| Information | Maßgeblicher Ort |
+| --- | --- |
+| Dauerhafte Produktziele, Grenzen und Akzeptanzkriterien | [REQUIREMENTS.md](REQUIREMENTS.md) |
+| Phasen, Abhängigkeiten und historische Meilensteine | [ROADMAP.md](ROADMAP.md) |
+| Aktuelle Aufgaben, Prioritäten, Blocker und Restarbeiten | Ausschließlich [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues) |
+| Regeln und Lesewege für Coding Agents | [AGENTS.md](AGENTS.md) |
+| Architektur, Datenklassen und Review-/Apply-Verträge | [Architektur](docs/conversation-architecture.md) und [V3.3-Design](docs/v33-design.md) |
+| Änderungen und Prüfnachweise | Zugehörige [Pull Requests](https://github.com/Hengsto/Knowledge-System/pulls?q=is%3Apr) und [CI-Läufe](https://github.com/Hengsto/Knowledge-System/actions) |
 
-PostgreSQL, Dateisystem und Index sind ausdrücklich keine gemeinsame Transaktion.
-Der Apply-Journal macht Abstürze vor/nach Rename und vor/nach Indexbestätigung
-erkennbar und wiederholbar. Bereits früher akzeptierte Vorschläge bleiben nach der
-Migration unangewendet, bis im Browser ausdrücklich „Apply accepted revision“ gewählt
-wird. Telegram kann weiterhin nur die Erstellung eines Vorschlags bestätigen; MCP
-bleibt read-only. Details: [V3.3-Design](docs/v33-design.md).
+## Belegter Funktionsumfang
 
-Production verwendet einen separat konfigurierten persistenten Knowledge-Daten-Root;
-der Application-Checkout ist nicht das Schreibziel. Es gibt weder automatische
-Git-Commits/-Pushes noch Production-Credentials. Die erstmalige Storage-Migration ist
-ein separater Operator-Schritt und wurde durch diese Änderung nicht ausgeführt.
+Der geprüfte Dokumentationsausgangspunkt ist `ebded84edb3a8a17ab2ec26ca9aa7f1035215b9e`
+auf `main` (27. September 2026). Darin sind implementiert und gemergt:
 
-## V3.2.1: Private Browser-Review-Konsole (development)
+- Markdown-Quelladapter, abschnittsbezogenes Chunking, lokale Embeddings und
+  inkrementeller PostgreSQL-/pgvector-Index. `fast` nutzt deutsche Volltextsuche;
+  `quality` ergänzt einen lokalen Reranker. Separate Retrieval-Evaluationen sind vorhanden.
+- Zwei lesende MCP-Tools, `search_knowledge` und `get_document`, über stdio und
+  Streamable HTTP. Der HTTP-Endpunkt hat selbst keine Authentifizierung oder TLS.
+  Ein eingerichteter ChatGPT-Client oder ein aktuell geschützter Tunnel ist aus dem
+  Repository nicht belegt; das Smoke-Skript unterstützt optionale Cloudflare-Access-Header.
+- Gesprächsverlauf, Zusammenfassungen, Themenrouting und Proposals mit dauerhafter
+  Speicherung; Telegram als Eingabe-/Chat-Client und ein OpenAI-kompatibler LLM-Adapter.
+- Authentifizierter Browser-Review mit vollständigem Diff und revisionsgebundener
+  Entscheidung; V3.3 ergänzt **Accept & Apply**, Konflikterkennung und getrennte
+  Wiederholung von Datei-Apply und dokumentbezogener Indexierung.
 
-**Telegram sammelt. Der Browser prüft und entscheidet. Das Backend erzwingt
-Sicherheit und Konsistenz.** Der separate `knowledge-review`-Prozess bietet eine
-private, serverseitig gerenderte Review-Queue mit Single-Admin-Anmeldung, CSRF-Schutz
-und vollständiger Diff-Ansicht. Siehe [Design und lokaler Start](docs/v321-browser-review.md).
+Für diesen Ausgangscommit bestanden [CI / admission und CI / verify](https://github.com/Hengsto/Knowledge-System/actions/runs/36186972997).
+Historische Bereichsprüfungen sind in der [Roadmap](ROADMAP.md#historische-meilensteine-v0-bis-v33)
+verlinkt. Diese Nachweise belegen keinen aktuellen Produktionsstand. Die
+Produktionsmigration für V3.2/V3.3 ist im letzten dokumentierten Stand offen;
+ein späterer Rollout wurde hier nicht nachgewiesen.
 
-Telegram erstellt weiterhin Vorschläge nach Bestätigung. `/proposals`, `/proposal`
-und `/proposal-refresh` geben nur noch einen Browser-Hinweis aus. Alte Review-Buttons
-sind serverseitig wirkungslos; Telegram liefert keine Diffs oder Entscheidungen mehr.
+Automatische Generierung erzeugt zunächst Proposals. Telegram erzeugt sie über
+Befehle oder Intent-Verarbeitung, gegebenenfalls nach Vorschlagsbestätigung, trifft
+aber keine Review-/Apply-Entscheidungen. Der Browser stößt nach
+Review das kontrollierte Schreiben an. Die Anwendung führt keine automatischen
+Git-Commits, Pushes oder Wissens-PRs aus; die Git-Versionierung des Datenbestands
+bleibt ein ausdrücklicher Operator-Schritt. Produktänderungen nutzen bereits PRs.
 
-Die historische V3.2.1-Grenze „Accept speichert nur Zustimmung“ bleibt für vor V3.3
-akzeptierte Datensätze sichtbar; V3.3 wendet sie nur nach einer neuen ausdrücklichen
-Browseraktion an.
-
-## V3.2: Clientneutrale Review-Domain
-
-V3.1.2 is the production-tested baseline. V3.2 adds a client-neutral
-`ProposalReviewService`: inspect pending proposals, prepare immutable review revisions,
-then Accept, Reject or Defer. **Accept stores consent only: no Markdown/Git write and
-no reindex.** V3.3 will apply the exact accepted bytes only after rechecking the base.
-
-Im Browser benötigt jede Entscheidung eine konkrete Revision. Ungültige Legacy-Ziele
-können dort ausdrücklich korrigiert werden; die sichere Pfad-/Inhaltsprüfung bleibt
-unverändert. Siehe auch [historisches Domain-Design](docs/v32-review-design.md).
-
-## V3.1: real chat, Telegram, and topic routing
-
-Telegram is a thin long-polling client, not conversation state. One Telegram chat/user
-identity can own any number of server-side conversations and stores one durable active
-conversation. Before a normal message reaches `ConversationService`, the provider-neutral
-`ConversationRouter` sees only the latest 20 topic records (ID, title, summary slot,
-activity, active marker) and chooses continue, switch, or create. `/new`, `/topics`, and
-`/switch` bypass model routing.
-
-Conversation memory remains durable application context, **not canonical knowledge**.
-Retrieval calls `KnowledgeService` directly (never MCP/HTTP), preserving source IDs for
-future read-only source adapters. A proposal starts as a pending review object: neither chat,
-commands, nor suggestion buttons write Markdown or Git.
-
-The real provider adapter uses an OpenAI-compatible Chat Completions endpoint behind the
-existing chat, summarizer, classifier, and proposal ports plus the new routing port. Tests
-use deterministic fakes and make no Telegram or LLM network requests.
-
-Local-first prototype for a long-term personal knowledge base.
-
-## Core rule
-
-**Original knowledge is the source of truth. Retrieval tables are a disposable index.**
-
-For V0:
-
-- canonical knowledge lives as Markdown under `knowledge/`
-- Git versions every change
-- PostgreSQL + pgvector stores derived chunks and embeddings
-- embeddings are generated locally
-- only changed chunks are re-embedded
-- search uses exact cosine similarity
-- no AI is allowed to write directly to `main`
-
-Proposal review and guarded Markdown apply are available through V3.3. Versioning a
-dirty dedicated Knowledge checkout remains an explicit operator workflow; the service
-never commits or pushes Git.
-
-## Architecture
+## Architektur und Produktgrenzen
 
 ```text
-CLI --------------------------+
-                              |
-MCP Client -- stdio ----------+
-MCP Client -- HTTP /mcp ------+
-                              v
-                         MCP Server
-                              |
-                              v
-                     KnowledgeService
-                              |
-                              v
-                  Retrieval + SourceAdapter
-                              |
-                              v
-GitMarkdownSource -> knowledge/*.md (source of truth)
-                              |
-                              v
-PostgreSQL chunks + vector/full-text indexes (disposable retrieval cache)
+CLI / lesende MCP-Clients -> KnowledgeService -> SourceAdapter / Retrieval
+Telegram -> ConversationRouter -> ConversationService -> ProposalService
+                                 |-> KnowledgeService
+                                 |-> austauschbare LLM-Protokolle
+Browser-Review -> ProposalReviewService -> ProposalApplyService
+                                          |-> kanonisches Markdown
+                                          |-> dokumentbezogener Suchindex
+PostgreSQL: abgeleiteter Index UND dauerhafter Gesprächs-/Review-/Apply-Zustand
 ```
 
-Indexing still derives everything from source documents:
+Der Index ist reproduzierbar. Gespräche, Entscheidungen und Apply-Journal sind
+dauerhafte Anwendungsdaten und dürfen bei einem Index-Neuaufbau nicht verloren gehen.
+Die [Architektur](docs/conversation-architecture.md) erläutert die Trennung.
 
-```text
-GitMarkdownSource
-        |
-        v
-Markdown chunker
-        |
-        v
-local embedding model
-        |
-        v
-PostgreSQL + pgvector
-```
+Allgemeine Assistenz, Orchestrierung, Dialogführung und langfristige Oberflächen
+einschließlich Windows-Desktop-Client gehören zu **Haley**. Journaling ist eine
+mögliche Quelle beziehungsweise ein Client. Knowledge-System stellt dafür künftig
+authentifizierte, clientunabhängige Integrationsschnittstellen bereit. Der vorhandene
+Gesprächskern wird durch diese Produktabgrenzung nicht umgebaut.
 
-## Quick start
+Produktcode und Produktdokumentation bleiben in diesem Repository. Laufzeitwissen
+soll unabhängig davon in einem separaten privaten Daten-Repository verwaltet und
+gesichert werden können; Name, Migration und Backupbetrieb sind noch festzulegen.
+Bis zu einer gesonderten Migration bleibt vorhandenes `knowledge/` kanonisch.
 
-1. Copy the environment file:
+## Entwicklung und Betrieb
 
-```bash
-cp .env.example .env
-```
+- [Lokale Einrichtung, Start, MCP und Retrieval-Evaluation](docs/local-development.md)
+  mit Python ab 3.11, pip und PostgreSQL/pgvector.
+- [Prüfauswahl, lokale Befehle und vorhandene CI](docs/CI.md#prüfauswahl-und-nachweise).
+- [Debian-/Docker-Betrieb und Migrationsgrenzen](docs/DEPLOYMENT_DEBIAN.md), einschließlich
+  des geplanten [Betriebsprofils](docs/DEPLOYMENT_DEBIAN.md#zielkonvention-und-bestehende-konfiguration).
+- [Browser-Konfiguration und lokaler Start](docs/v321-browser-review.md#local-start-and-checks).
 
-2. Start PostgreSQL:
-
-```bash
-docker compose up -d
-```
-
-3. Create a virtual environment and install:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
-```
-
-4. Initialize the database:
-
-```bash
-knowledge init-db
-```
-
-5. Index the sample knowledge:
-
-```bash
-knowledge index
-```
-
-6. Search:
-
-```bash
-knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?"
-```
-
-7. Run the retrieval baseline evaluation:
-
-```bash
-knowledge eval --suite eval/retrieval_v01.jsonl
-```
-
-The default eval retriever is the semantic vector baseline. A separate PostgreSQL full-text
-keyword baseline can be measured without changing the eval suite:
-
-```bash
-knowledge eval --suite eval/retrieval_v01.jsonl --retriever keyword --text-config german
-```
-
-Experimental Reciprocal Rank Fusion of the vector baseline and German keyword baseline:
-
-```bash
-knowledge eval --suite eval/retrieval_v01.jsonl --retriever hybrid
-```
-
-Experimental keyword-candidate reranking with `BAAI/bge-reranker-v2-m3`:
-
-```bash
-knowledge eval --suite eval/retrieval_v01.jsonl --retriever reranker
-```
-
-Product-facing search goes through the internal service boundary:
-
-```bash
-knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?" --mode quality
-knowledge search "Wie können Staatsschulden die Geldpolitik beeinflussen?" --mode fast
-```
-
-`quality` uses keyword candidates plus the local reranker. `fast` uses PostgreSQL keyword
-search with the German text-search configuration.
-
-## Read-only MCP server
-
-V2 exposes the existing `KnowledgeService` through an official MCP Python SDK v2 server.
-The local stdio entry point is intended to be started by an MCP client:
-
-```bash
-knowledge-mcp
-```
-
-`stdio` remains the default transport. To start the same server and tools locally over
-Streamable HTTP in Windows PowerShell:
-
-```powershell
-$env:MCP_TRANSPORT="streamable-http"
-$env:MCP_HOST="127.0.0.1"
-$env:MCP_PORT="8000"
-$env:MCP_PATH="/mcp"
-knowledge-mcp
-```
-
-The local MCP URL is:
-
-```text
-http://127.0.0.1:8000/mcp
-```
-
-The HTTP transport uses the MCP SDK's DNS-rebinding protection. By default only loopback
-Host and Origin values are allowed, and the server binds to `127.0.0.1`. Non-loopback use
-requires an explicitly configured allowlist or supplied `TransportSecuritySettings`. This
-endpoint has no authentication or TLS and is not intended for direct public Internet access.
-
-The server exposes exactly two read-only tools:
-
-- `search_knowledge`: searches indexed knowledge in `fast` or `quality` mode
-- `get_document`: reads the canonical original document through its registered source adapter
-
-`search_knowledge` never indexes or writes data. `get_document` accepts logical
-`source_id`/`source_path` values from search results, not arbitrary operating-system paths.
-The server process creates one `KnowledgeService`; the reranker remains lazy and is reused
-after the first `quality` search.
-
-## Conversation core
-
-V3.0 adds a provider- and client-independent conversation core with persistent messages,
-rolling summaries, proposal intent handling and pending proposals. V3.1 adds the real LLM and
-Telegram client; V3.2 adds review but still cannot write canonical knowledge. See
-[docs/conversation-architecture.md](docs/conversation-architecture.md).
-
-Conversation history, summaries, proposal suggestions and proposals share PostgreSQL with
-the retrieval index, but they are **durable, backup-relevant application data**. Only the
-`chunks` and `index_metadata` tables are disposable. `knowledge index` never modifies the
-durable tables, and `knowledge init-db` creates them additively without resetting their data.
-Manual `pg_dump`/`pg_restore` recovery and the isolated PostgreSQL verification procedure are
-documented in [docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md#durable-state-backup).
-
-For protocol-level local smoke tests covering stdio and Streamable HTTP:
-
-```bash
-pytest tests/test_mcp_server.py
-```
-
-Before a real search smoke test, start and initialize the PostgreSQL schema and disposable
-retrieval index as in the quick start. Then call `search_knowledge` and `get_document` from a standard MCP client
-configured to launch the `knowledge-mcp` command.
-
-## Debian Docker deployment
-
-V2.2 provides a separate [server Compose file](compose.server.yml) so the existing
-PostgreSQL-only Windows development workflow remains unchanged. The server deployment runs
-PostgreSQL and the read-only MCP service as containers, mounts `knowledge/` read-only from
-the checkout, and persists both PostgreSQL data and the Hugging Face model cache.
-
-The MCP process listens on `0.0.0.0:8000` inside its container, while Docker publishes it
-only as `127.0.0.1:8000` on the Debian host. It is not configured for public access.
-
-The complete first-install, smoke-test, restart, persistence and update procedure is in
-[docs/DEPLOYMENT_DEBIAN.md](docs/DEPLOYMENT_DEBIAN.md).
-
-Machine-readable output:
-
-```bash
-knowledge eval --suite eval/retrieval_v01.jsonl --json
-```
-
-The eval suite is JSON Lines. Each case contains an `id`, a natural-language `query`,
-`expected_sources`, optional `expected_headings`, and an optional `description`.
-V0.1 includes a small economics-focused test corpus and retrieval suite. The metrics are
-useful as a local baseline, not as a broad benchmark for general knowledge retrieval.
-Keyword eval currently supports PostgreSQL `german` and `simple` text search configurations;
-`german` is the default because it performs better on the current German-language suite.
-
-## What the current system intentionally does not do
-
-- no ChatGPT integration
-- no automatic knowledge writes
-- no pull-request workflow
-- no HNSW index
-- no journal adapter
-
-These remain outside the current read-only local scope.
+Eine spätere kommerzielle Nutzung bleibt eine Option. Die Leitplanken und die
+Lizenzprüfung stehen in [REQUIREMENTS.md](REQUIREMENTS.md#kommerzielle-option);
+kommerzielle Funktionen gehören derzeit nicht zum Produktumfang.

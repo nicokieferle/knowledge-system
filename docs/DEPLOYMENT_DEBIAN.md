@@ -1,10 +1,79 @@
-# Debian 12 Docker deployment
+# Debian-/Docker-Betrieb
+
+## Geltungsbereich und Nachweise
+
+Dieses Dokument bewahrt die vorhandenen Betriebsverfahren und historischen
+Validierungen. Es ist keine Deploymentfreigabe und kein Nachweis des aktuellen
+Servers. Der letzte dokumentierte V3.2/V3.3-Stand lässt die Produktionsmigration
+offen; deren Planung steht in [ROADMAP.md](../ROADMAP.md#produktionsmigration-als-eigene-betriebsphase).
+Implementierungsverträge: [V3.3-Design](v33-design.md). Operative Aufgaben,
+Prioritäten und Blocker: ausschließlich [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues).
+Die unten erhaltenen älteren englischen Anleitungen sind im jeweiligen historischen
+Kontext zu lesen; die folgenden Klarstellungen beschreiben den aktuellen Repo-Abgleich.
+
+## Zielkonvention und bestehende Konfiguration
+
+Gemäß [KS-OPS-001](../REQUIREMENTS.md#ks-ops-001) gilt folgende **Zielkonvention**:
+
+| Verantwortung | Geplanter Hostpfad |
+| --- | --- |
+| Produktcheckout | `/srv/projects/knowledge-system` |
+| Persistente Anwendungs- und Wissensdaten | `/data/knowledge-system/` |
+| Hostbezogene Konfiguration und dort verwaltete Secrets | `/data/config/knowledge-system/.env` |
+
+Diese Pfade sind ein Betriebsprofil, keine fest eingebauten Anwendungsvoraussetzungen.
+Werte unterscheiden sich je Host. Der Starter beziehungsweise das Deployment muss die
+Hostkonfiguration einlesen und Datenpfade auf die tatsächlichen Container-/Anwendungspfade
+abbilden. Code, Secrets, kanonisches Wissen, dauerhafter Datenbankzustand und neu aufbaubare
+Ableitungen bleiben getrennte Verantwortungen. Secrets gehören niemals in Git.
+
+**Noch keine Umstellung:** [compose.server.yml](../compose.server.yml) und die
+vorhandenen Betriebsskripte verwenden weiterhin `/data/knowledgesystem` und standardmäßig
+`.env.server` im Checkout. Auch die folgenden historischen Befehle verwenden diese
+Bestandswerte. Ein anderer `--env-file` allein ändert die festen Daten-/Cache-Mounts
+nicht. Die Umstellung des Hostprofils und der Sicherungsabläufe benötigt einen gesonderten
+Auftrag; dieser Dokumentationsrefactor verändert weder Konfiguration noch Daten.
+
+| Bestehender Host-/Konfigurationswert | Container / Anwendung | Einordnung |
+| --- | --- | --- |
+| `KNOWLEDGE_DATA_ROOT` aus expliziter Compose-Env-Datei | `/knowledge-data` → `KNOWLEDGE_ROOT` | Externer kanonischer Datenbaum; MCP/Telegram lesen, nur `review-web` schreibt. Der Beispielwert lautet `/data/knowledgesystem/knowledge-repository/knowledge`. |
+| `/data/knowledgesystem/postgres` | `/var/lib/postgresql/data` | Fester Host-Bind im Server-Compose; enthält Index **und** dauerhafte Daten. |
+| `/data/knowledgesystem/huggingface` | `/home/knowledge/.cache/huggingface` → `HF_HOME` | Fester Host-Bind für heruntergeladene Modelle; neu beschaffbarer Cache. |
+| `.env.server` | `docker compose --env-file .env.server` → explizite `environment`-Felder | Hostwerte werden interpoliert; die Env-Datei wird nicht als Datei in den Container gemountet. |
+| `COMPOSE_ENV_FILE` | Backup-/Restore-Helfer in `scripts/durable_tables.sh` | Unterstützter Override der Env-Datei; Default `.env.server`. `BACKUP_DIR` hat einen gesonderten bestehenden Default. |
+
+Produktcode/-dokumentation bleiben in `Hengsto/Knowledge-System`. Ein **separates privates
+Daten-Repository** für Laufzeitwissen ist vorgesehen. Der Verzeichnisname
+`knowledge-repository` ist kein beschlossener GitHub-Repository-Name. Name, Migration,
+Git-Versionierungsablauf und Backupbetrieb bleiben offen. Es wurde kein Repository
+erstellt und kein produktives Wissen verschoben. Ein Apply schreibt keinen Git-Commit;
+Operatoren müssen freigegebene Änderungen anschließend nachvollziehbar versionieren.
+
+### Konfiguration und Startgrenzen
+
+Lokale `.env`-Ladepriorität, Defaults und Validierungsgrenzen stehen in
+[local-development.md](local-development.md#konfiguration). Im Server-Compose sind
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `DATABASE_URL` und
+`KNOWLEDGE_DATA_ROOT` Pflichtwerte. Telegram benötigt Modell, API-Key und separaten
+Bot-Token; Review benötigt Argon2id-Hash, Session-Secret und vollständige Owner-Zuordnung.
+Die `${VAR:?...}`-Prüfungen validieren nur vorhandene Werte bei Compose-Interpolation;
+sie ersetzen weder Verbindungsprüfung noch tatsächliche Authentifizierung.
+Das leere Review-Secret-Beispiel ist absichtlich nicht startfähig.
+
+Browser-Validierung, zulässige Werte und Sitzungsgrenzen sind im
+[Browser-Design](v321-browser-review.md#authentication-and-sessions) beschrieben.
+V3.3 prüft vor aktiviertem Apply einen vorhandenen sicheren Wissensroot. Die Anwendung
+initialisiert/migriert kein Schema und indexiert nicht automatisch beim Dienststart.
+`/healthz` bestätigt nur den HTTP-Prozess, nicht die Datenbankverbindung.
+Der Server-MCP-Endpunkt ist selbst ohne Auth/TLS; die Loopback-Bindung und Allowlist
+sind keine allgemeine authentifizierte Integrations-API.
 
 ## V3.3 storage and migration gate (not deployed by this change)
 
-V3.3 must not make the application checkout writable. Set `KNOWLEDGE_DATA_ROOT` to
-the absolute host path of a separately persistent Knowledge tree; the documented
-layout is:
+V3.3 schützt den Produktcheckout vor Wissensschreibzugriffen. Die folgende bereits
+vorhandene Layout-/Migrationsanleitung verwendet das bisherige Pfadprofil; sie belegt
+keine Ausführung und wird erst in einem gesonderten Betriebsauftrag an den Istzustand
+und die oben genannte Zielkonvention angepasst:
 
 ```text
 /path/to/Knowledge-System/                         application checkout, deployable/clean
@@ -132,9 +201,9 @@ Dedicated persistent Knowledge tree
 knowledge-mcp container (non-root, CPU, Streamable HTTP on 0.0.0.0:8000)
         |
         +--> PostgreSQL + pgvector container
-        |      `--> knowledge_pgdata volume
+        |      `--> /data/knowledgesystem/postgres (Host-Bind)
         |
-        `--> knowledge_hf_cache volume
+        `--> /data/knowledgesystem/huggingface (Host-Bind)
 
 Debian host publishes only 127.0.0.1:8000 -> container port 8000
 ```
@@ -233,17 +302,16 @@ runs one fast search, runs two quality searches in the same MCP process, and fet
 canonical original document for the top quality result. It reports timings and metadata but
 does not print document contents.
 
-The first quality request can take substantially longer while
-`BAAI/bge-reranker-v2-m3` is downloaded and loaded. The second request reuses the in-process
-reranker. `HF_HOME` points at the persistent `knowledge_hf_cache` volume, so later container
-processes reuse the downloaded model files even though they load the model into RAM again.
+Der erste Quality-Aufruf kann durch Download/Laden von `BAAI/bge-reranker-v2-m3`
+länger dauern; der zweite nutzt den Reranker desselben Prozesses. `HF_HOME` verweist
+im Server-Compose auf den persistenten Host-Bind des Modellcaches. Neue Prozesse
+nutzen die heruntergeladenen Dateien, laden das Modell aber erneut in den Arbeitsspeicher.
 
 Inspect the cache without printing its contents:
 
 ```bash
 docker compose --env-file .env.server -f compose.server.yml exec knowledge-mcp \
   sh -lc 'du -sh "$HF_HOME"'
-docker volume inspect knowledge-system_knowledge_hf_cache
 ```
 
 ## Restart and persistence
@@ -278,12 +346,19 @@ docker compose --env-file .env.server -f compose.server.yml up -d
 docker compose --env-file .env.server -f compose.server.yml ps
 ```
 
-Named volumes survive `down`. Do not use `docker compose ... down -v` after V3 conversation
+Das Server-Compose nutzt Host-Binds; die lokale Entwicklungsdatei nutzt dagegen
+ein benanntes PostgreSQL-Volume. Beide enthalten gegebenenfalls dauerhafte Daten.
+Die folgende historische Warnung gilt insbesondere für das lokale Volume und
+ältere Deploymentprofile, nicht als Behauptung eines Server-Named-Volumes:
+
+Do not use `docker compose ... down -v` after V3 conversation
 features hold real data: it deletes the PostgreSQL volume, including non-rebuildable
 conversations, messages, summaries, suggestions and proposals. Back up that volume before
 destructive maintenance. V3.1 client routing state is also non-rebuildable and belongs in
-the same durable backup. Canonical Markdown remains in the Git checkout, while only the
-retrieval tables and model cache can be recreated from source.
+the same durable backup.
+Kanonisches Markdown gehört zum getrennten Wissensdatenbestand, dessen produktive
+Migration separat nachzuweisen ist. Retrieval-Tabellen werden daraus rekonstruiert;
+der Modellcache ist unabhängig neu beschaffbar.
 
 ## Durable state backup
 
@@ -292,7 +367,7 @@ PostgreSQL contains two operationally different data classes:
 - Rebuildable: `chunks`, retrieval indexes and `index_metadata`.
 - Non-rebuildable: `conversations`, `messages`, `conversation_summaries`,
   `proposal_suggestions`, `proposals`, `client_states`, `client_conversations` and
-  `client_message_bindings`, `proposal_reviews` and `proposal_decisions`.
+  `client_message_bindings`, `proposal_reviews`, `proposal_decisions` and `proposal_applies`.
 
 The scripts use the PostgreSQL 17 `pg_dump` and `pg_restore` binaries already present in the
 PostgreSQL container. They never put the database password on the command line. The durable
@@ -465,7 +540,13 @@ docker compose --env-file .env.server -f compose.server.yml ps
 ```
 
 No Git synchronization, database initialization or indexing runs automatically.
-# V3.1 Telegram service (manual deployment)
+## V3.1 Telegram service (historisches manuelles Deploymentverfahren)
+
+Der folgende Ablauf dokumentiert den damaligen Featurebranch-Rollout. Er ist keine
+heutige Updateanleitung: Vor späteren Rollouts einen geprüften Release-Commit, das
+aktuelle Schema und die V3.3-Storage-Voraussetzungen festlegen. Den alten Featurebranch
+nicht als aktuellen Produktionsstand übernehmen. Historische Befehle bleiben zur
+Nachvollziehbarkeit erhalten.
 
 V3.1 adds a `telegram-bot` long-polling service without an inbound port or Cloudflare/DNS
 change. It imports `ConversationService` and `KnowledgeService` directly; it does not call

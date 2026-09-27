@@ -1,5 +1,11 @@
 # V3.2 implementation decision
 
+> Historische Entscheidung, über [PR #6](https://github.com/Hengsto/Knowledge-System/pull/6)
+> gemergt. Aussagen zum damaligen Entwicklungsbranch oder künftigem V3.3 sind
+> historische Planung, kein aktueller Aufgabenstatus. Der heutige Dateischreib-/Index-
+> Vertrag steht im [V3.3-Design](v33-design.md): kein automatisches Git-Apply oder
+> Reindex nach einem Git-Merge. Entwicklungsphasen: [ROADMAP.md](../ROADMAP.md).
+
 **Historical V3.2 client design:** V3.2.1 supersedes the Telegram UI, callback and
 implicit-first-display preparation described below. Reviews/decisions now exist
 only in the private browser client; all preparation requires POST. Domain values,
