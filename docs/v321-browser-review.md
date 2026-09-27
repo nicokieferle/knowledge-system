@@ -1,11 +1,14 @@
 # V3.2.1 — private Browser-Review-Konsole
 
-> V3.2.1 history. V3.3 keeps its authentication, ownership, CSRF and full-diff
-> guarantees but changes the pending acceptance route to
-> `POST /reviews/{uuid}/decision/accept-apply`. It durably binds the decision/intent
-> and then applies/indexes as described in [V3.3](v33-design.md). Reject/defer remain
-> decision-only. Old accepted proposals require the separate explicit Apply action.
-> No V3.3 mutation is available through Telegram or MCP.
+> Historisches V3.2.1-Design, über [PR #8](https://github.com/Hengsto/Knowledge-System/pull/8)
+> gemergt. Authentifizierung, Ownership, CSRF und vollständiger Diff gelten weiter.
+> V3.3 verwendet für Zustimmung `POST /reviews/{uuid}/decision/accept-apply`, bindet
+> Entscheidung/Intent dauerhaft und führt anschließend Datei-Apply/Indexierung gemäß
+> [V3.3-Design](v33-design.md) aus. Reject/Defer entscheiden weiterhin ohne Apply;
+> alte akzeptierte Vorschläge benötigen eine gesonderte explizite Apply-Aktion.
+> Telegram und MCP erhalten keine V3.3-Mutationsfähigkeit. Aussagen unten zu „no merge“
+> oder künftigem V3.3 beschreiben den damaligen Stand, kein heutiges Deployment.
+> Phasen und Nachweise: [ROADMAP.md](../ROADMAP.md).
 
 Base: `1aab528c10fb8a90b1694187ccb0d02e2e743e05`, including PR #7.
 Development only: no merge, deployment, server access or real Telegram messages.

@@ -1,5 +1,12 @@
 # V3.3 — safe accepted-revision apply
 
+> Geltungsbereich: technischer V3.3-Vertrag und damalige Entwurfsgrundlage, inzwischen
+> über [PR #11](https://github.com/Hengsto/Knowledge-System/pull/11) gemergt.
+> Kein Nachweis eines produktiven Rollouts. Das nachfolgende bisherige Pfadbeispiel
+> unter `/data/knowledgesystem` bleibt zur Historie erhalten; die neue Zielkonvention
+> und der unveränderte Compose-Stand stehen im [Betriebsprofil](DEPLOYMENT_DEBIAN.md#zielkonvention-und-bestehende-konfiguration).
+> Produktgrenzen: [REQUIREMENTS.md](../REQUIREMENTS.md); Phasen: [ROADMAP.md](../ROADMAP.md).
+
 ## Technical baseline and storage gate
 
 V3.2.1 already provided immutable review revisions containing exact old/new text,
@@ -14,11 +21,13 @@ deployment checkout and a later code deployment could overwrite knowledge or fai
 of local changes. The repository contained no contract for automatic service-side Git commits,
 credentials or pushes. V3.3 therefore does not write that checkout.
 
-`KNOWLEDGE_DATA_ROOT` now names a separately managed persistent host data tree. The intended
-production value is `/data/knowledgesystem/knowledge-repository/knowledge`: its parent may be
-an operator-managed dedicated Git checkout, while the containers see only the `knowledge`
-subdirectory and no `.git` or credentials. MCP and Telegram mount it read-only; only
-`review-web` mounts it read-write. Application image/root filesystems remain read-only.
+`KNOWLEDGE_DATA_ROOT` bezeichnet einen separat verwalteten persistenten Host-Datenbaum.
+Der ursprüngliche V3.3-Beispielwert in der unveränderten Serverkonfiguration ist
+`/data/knowledgesystem/knowledge-repository/knowledge`; die oben verlinkte Zielkonvention
+ersetzt ihn als langfristiges Betriebsziel, ohne ihn hier technisch umzustellen.
+Das Elternverzeichnis kann ein Operator-verwalteter Datencheckout sein. Container sehen
+nur `knowledge/`, keine `.git`-Daten oder Credentials. MCP und Telegram mounten nur lesend,
+`review-web` mit Schreibzugriff. Image und Root-Dateisysteme bleiben nur lesbar.
 
 The container runs as UID/GID 10001. Production startup requires a real, existing root (not a
 symlink/alias), owned by the service UID, readable/writable/searchable by it and not writable

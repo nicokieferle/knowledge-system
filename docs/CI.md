@@ -1,5 +1,98 @@
 # GitHub Actions CI
 
+## Prüfauswahl und Nachweise
+
+Diese Datei ist der maßgebliche Prüfungsort. Befehle aus dem Repository-Root mit
+installiertem `dev`-Extra ausführen; Einrichtung: [lokale Entwicklung](local-development.md).
+Prüfungen, Umgebung, Commit einschließlich uncommitteter Änderungen und Ergebnis
+im zugehörigen PR belegen. Historische Zahlen weiter unten gelten nur für den dort
+genannten Stand. Aktuelle Aufgaben und Blocker gehören ausschließlich in
+[GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues).
+
+| Änderung / Prüfung | Lokaler Befehl oder Auswahl | Erwartung und Grenze |
+| --- | --- | --- |
+| Nur Markdown | `git diff --check`; geänderte relative Links samt Ankern, Requirement-IDs, Statusaussagen und gesamten Diff gegen Quellen prüfen | Keine kaputten Links, unbeabsichtigten Dateien, Platzhalter oder unbelegten Betriebsbehauptungen. Es gibt keinen dedizierten Markdown-/Link-Checker im Repository. |
+| Betriebsdokumentation | `python -m pytest tests/test_deployment.py::test_debian_documentation_has_durable_backup_and_defensive_restore_commands -q` | Vorhandene statische Dokumentationsprüfung; startet keinen Dienst und erstellt kein Backup. |
+| Funktionale Änderungen: Kernprüfungen | `python -m ruff check .`, `python -m ruff format --check .`, `python -m pytest tests --ignore=tests/integration -q -ra` | Lint, Format und Unit-/lokale Protokolltests bestehen; keine produktiven Credentials. |
+| Retrieval-/Quelländerungen | Zusätzlich betroffene `test_chunking`, `test_sources`, `test_indexer`, `test_search`, `test_reranker`, `test_evaluation`, `test_service` unter `tests/`; bei Qualitätsänderung [Retrieval-Evaluation](local-development.md#retrieval-evaluation) | Quellen-/Indexintegrität und messbare Suchqualität; Modelldownloads/isolierte DB bei realer Evaluation berücksichtigen. |
+| MCP, Gespräch, Routing, Review/Apply | Entsprechende `tests/test_mcp_server.py`, `test_conversation_*.py`, `test_telegram_*.py`, `test_proposal_*.py`, `test_review_web.py`, `test_knowledge_apply.py`; betroffene PostgreSQL-Integration gemäß lokaler Reproduktion | Plattform-, Auth-, Revisions- und Persistenzgrenzen testen. Reale DB-Prüfung nur mit den dokumentierten isolierten Opt-ins; Skips nicht als Erfolg melden. |
+| Schema, dauerhafte Daten, Betrieb oder Build | [Lokale Reproduktion](#lokale-reproduktion), einschließlich isolierter Integration und gebautem Image-Smoke | Keine Produktionsressourcen; separates Testprojekt. |
+
+Für funktionale Änderungen müssen Kern- und betroffene Bereichsprüfungen bestehen.
+Bei reiner Dokumentation sind lokale Volltests nicht pauschal nötig. Die bestehende
+PR-CI hat keinen Markdown-Pfadfilter und führt trotzdem ihr unverändertes Programm aus.
+
+Vor einer Merge-Bereitschaft sind **CI / admission** und **CI / verify** am aktuellen
+PR-Head beziehungsweise zugehörigen Test-Merge-Commit nachzuweisen. Ein lokaler Erfolg
+oder ein älterer grüner Lauf genügt nicht. Das ist eine fachliche Prüfpflicht,
+keine Behauptung einer technischen Merge-Sperre: Beim lesenden Abgleich am
+27. September 2026 verweigerten GitHubs Branch-Protection- und Ruleset-APIs den Zugriff
+mit HTTP 403 und Tarifhinweis. Eine technische Erzwingung konnte daher nicht bestätigt
+werden. Die Einstellungen wurden nicht verändert.
+
+Die bestehende `.auto-coding.toml` nennt für den externen Controller nur `CI / verify`
+und `auto_merge = true`. Das belegt weder die effektive Controller-Policy noch erlaubt
+es einem Agenten eigenständig Auto-Merge. Diese Konfiguration bleibt von den hier
+dokumentierten Prüfpflichten und den konkreten Befugnissen eines Auftrags getrennt.
+
+## Test- und Artefaktgrenzen
+
+Integrations- und End-to-End-Nachweise nennen die tatsächlich gemeinsam geprüften
+Komponenten, jeden relevanten Ersatz und die nicht geprüften Grenzen. Ein Mock darf
+nicht gerade das Zusammenspiel ersetzen, das der Nachweis behauptet.
+
+- Unit-/lokale Protokolltests verwenden je Test synthetische Daten, Fake-Stores,
+  Provider oder Testclients. Sie beweisen keine echte Telegram-, Modell- oder
+  produktive Datenbankintegration. Die Ersatzkomponenten im konkreten Test benennen.
+- `tests/integration` verbindet die jeweiligen echten Python-Stores/Services mit
+  isoliertem PostgreSQL/pgvector. Archive-/Restore-Tests verwenden das eigene
+  Compose-Testprojekt; das ist kein Backup-/Restore-Nachweis für Produktionsdaten.
+  Ersetzte Retrieval-/Modellkomponenten bleiben im jeweiligen Nachweis sichtbar.
+- `scripts/conversation_postgres_smoke.py` läuft im **gerade gebauten Image** als
+  dessen Benutzer gegen die isolierte Datenbank aus `compose.ci.yml`. Echte
+  Conversation-/Proposal-/Client-State-Stores, Memory und Service arbeiten zusammen.
+  Retriever, Chatmodell, Intent-Klassifikation, Summarizer und Proposal-Generator
+  sind synthetische Ersatzkomponenten. Der Smoke prüft Paketimporte, Datenbankzugriff
+  und diese Anwendungspfade im Image; er startet weder einen echten Telegram-Client
+  noch einen Modellaufruf oder den produktiven MCP-/Browser-End-to-End-Ablauf.
+- Reale Client-/Provider-, Modell- oder Zielhost-Smokes benötigen einen passenden
+  gesonderten Auftrag und isolierte Ressourcen. Fehlende Live-Nachweise ausdrücklich
+  nennen; bestandene Teiltests belegen keine umfassende Live-Funktionsfähigkeit.
+
+### Auswahl von Build und Image-Prüfung
+
+Änderungen an `src/`, mitkopierten Skripten, `pyproject.toml`, Abhängigkeiten,
+Dockerfile, Basisimage, `.dockerignore` oder Build-Erzeugung benötigen einen Build
+am maßgeblichen Stand. Dafür die vorhandene [lokale Reproduktion](#lokale-reproduktion)
+mit `bash scripts/ci.sh build` verwenden. Bei Änderungen an ausführbaren Paket-/Image-
+Inhalten, Abhängigkeiten, Benutzer/Rechten, Startverhalten oder Persistenz zusätzlich
+`bash scripts/ci.sh smoke` mit genau diesem Image ausführen. Die benötigten isolierten
+Services zuvor wie dokumentiert starten und anschließend projektgebunden bereinigen.
+Bei geänderten EntryPoints, MCP-/Browser-Start oder spezifischen Funktionen reicht der
+Conversation-Smoke allein nicht: die betroffene Start-/Funktion im erzeugten Image
+gezielt prüfen, beziehungsweise fehlende Abdeckung als konkrete Nachweislücke nennen.
+Die CI automatisiert bislang keinen vollständigen echten Client-/Modell-E2E-Test.
+
+Der Nachweis nennt Commit plus lokalen Diff, Buildumgebung, tatsächliche aufgelöste
+Abhängigkeiten, laufbezogenen Image-Tag und Image-ID/Digest sowie Build-/Smoke-Ergebnis.
+Die vorhandenen `build.log`, `smoke.log` und weiteren Reports dem Lauf zuordnen.
+`dependencies.txt` aus `scripts/ci.sh install` erfasst die Host-Virtualenv, nicht
+die Installation im Image; dessen aufgelöste Abhängigkeiten separat am erzeugten
+Image erfassen. Host- und Image-Nachweise entsprechend kennzeichnen.
+Falls die Image-ID dort nicht explizit erfasst ist, am erzeugten Image mit
+`docker image inspect --format '{{.Id}}' "$CI_IMAGE"` vor dem Cleanup separat
+feststellen und im Prüfnachweis festhalten. Cleanup entfernt den laufbezogenen
+Image-Tag; ein Tag allein kann überschrieben werden. Build-Erfolg und
+Nutzbarkeitsprüfung bleiben getrennte Aussagen, ebenso Quelltests und Image-Tests.
+
+**Reine Markdown-Änderungen verlangen lokal keinen neuen Artefakt-Build oder
+Image-Smoke.** README.md wird zwar durch das Dockerfile ins Image kopiert;
+rein redaktionelle Änderungen daran sind durch die
+Dokumentationsprüfung abgedeckt, kein Nachweis eines unveränderten Image-Digests.
+Ändert Markdown funktional Build-Eingaben oder deren Verarbeitung, greift dagegen
+die Build-Regel. Die unveränderte PR-CI hat keinen Markdown-Pfadfilter und führt
+weiterhin Build und Image-Smoke aus, auch für diesen Dokumentationsrefactor.
+
 ## Ablauf und Vertrauensgrenze
 
 `.github/workflows/ci.yml` prüft PRs gegen `main`, Pushes auf `main` und manuelle
@@ -14,12 +107,15 @@ Ein Maintainer muss geprüfte Änderungen in einen vertrauenswürdigen internen 
 übernehmen; es gibt keine automatische Übernahme oder Freigabe per Label.
 
 `CI / admission` ist eine zusätzliche Prüfung auf GitHub-hosted Ubuntu und führt
-keinen Checkout aus. Für jeden unterstützten Trigger müssen Ereignis-Sender, `actor`
-und `triggering_actor` vorhanden, identisch und als menschlicher Benutzer erkennbar
-sein. Ein Re-run durch einen anderen Account wird deshalb abgewiesen. Bei PRs müssen
-außerdem der Kopf im selben Repository liegen, der Autor ein Mensch und seine
-Zuordnung OWNER, MEMBER oder COLLABORATOR sein. Bot-PRs und Bot-Aktualisierungen eines
-menschlich erstellten PRs werden abgewiesen. Kein `pull_request_target`.
+keinen Checkout aus. Ereignis-Sender, `actor` und `triggering_actor` müssen vorhanden
+und identisch sein. Für menschliche PRs müssen Kopf und Ziel im selben Repository
+liegen; die Autoren-Zuordnung muss OWNER, MEMBER oder COLLABORATOR sein.
+Seit [PR #13](https://github.com/Hengsto/Knowledge-System/pull/13) erlaubt der Workflow
+zusätzlich die App `hengsto-auto-coding-runner[bot]`, ausschließlich bei eigenen PRs
+aus demselben Repository mit Branchpräfix `codex/` und übereinstimmendem Bot-Sender.
+Andere Bots, Forks und Re-runs durch einen anderen Account werden abgewiesen.
+Kein `pull_request_target`. Maßgeblich ist die Bedingung in
+[ci.yml](../.github/workflows/ci.yml).
 
 Admission ist keine unveränderbare Sicherheitsgrenze gegen Personen oder Bots mit
 Workflow-Schreibrechten: Workflow-Dateien sind selbst PR-Code und können von solchen
@@ -34,9 +130,9 @@ Archive/Restore, Produktions-Docker-Build und den bestehenden
 Installieren auf dem einzelnen Runner. Gesamtlimit: 45 Minuten; Teilprüfungen haben
 zusätzliche Limits. Pflichtfehler bleiben Fehler, auch bei `tee` (`pipefail`).
 
-Stabile Required Checks: **`CI / admission` und `CI / verify`**. Beide verwenden:
-ein übersprungener Self-hosted-Job allein darf einen ausgeschlossenen PR nicht
-mergefähig machen. Branch Protection wird hier nicht eingerichtet.
+Stabile Prüfnamen: **`CI / admission` und `CI / verify`**. Beide nachweisen:
+Ein übersprungener Self-hosted-Job allein macht einen ausgeschlossenen PR nicht
+mergefähig. Technische Erzwingung: siehe [Prüfauswahl](#prüfauswahl-und-nachweise).
 
 ## Runner und vorhandene Projektwerkzeuge
 
@@ -157,7 +253,8 @@ ausgelösten Cancellation wertet GitHub `always()` erneut aus und gibt dem Runne
 für Cleanup. Das ist keine Garantie: Nach Ablauf des Cancellation-Fensters beendet
 GitHub Schritte zwangsweise; auch der 45-Minuten-Job-Timeout, ein erzwungener Abbruch,
 Runner-Prozess-/VM-Ausfall oder Netzwerkverlust können Cleanup und Artefakt-Post-Steps
-verhindern. Diese Pfade werden erst durch die geplanten Fehler-/Abbruchtests belegt.
+verhindern. Historische Fehler-/Abbruchtests betreffen nur die jeweils geprüften
+Szenarien; sie belegen keinen Cleanup bei beliebigem hartem Ausfall.
 
 Nach einem solchen Ereignis aktive Läufe prüfen, den verwaisten Projektnamen über
 `docker compose ls --all` identifizieren, `CI_PROJECT`, `CI_IMAGE` und ein temporäres
@@ -196,6 +293,13 @@ Custom-Labels (ohne deren Registrierung zu behaupten). `bash -n scripts/ci.sh` u
 für letzteren Befehl muss `CI_IMAGE` gesetzt sein.
 
 ## Erste Runner-Abnahme und Diagnose
+
+Die folgenden Einrichtungsschritte beschreiben die historische Erstabnahme von
+PR #9, als der Workflow noch nicht auf `main` lag. Sie sind kein aktueller
+Aufgabenstatus. Die spätere App-Ausnahme ist oben dokumentiert; die zeitweise
+Fehler-/Timeout-/Abbruchprüfung in [PR #10](https://github.com/Hengsto/Knowledge-System/pull/10)
+wurde separat geführt und geschlossen. Ihr damaliger Umfang ersetzt keinen aktuellen
+Prüfnachweis für einen anderen Commit oder einen harten Runner-/Hostausfall.
 
 Erster Lauf: CI-Dateien auf `ci/self-hosted-rootless` committen, diesen Branch nach
 `origin` pushen und als vertrauenswürdiger menschlicher Repository-Mitarbeiter einen
