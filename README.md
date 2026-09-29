@@ -25,9 +25,11 @@ auf `main` (27. September 2026). Darin sind implementiert und gemergt:
   inkrementeller PostgreSQL-/pgvector-Index. `fast` nutzt deutsche Volltextsuche;
   `quality` ergänzt einen lokalen Reranker. Separate Retrieval-Evaluationen sind vorhanden.
 - Zwei lesende MCP-Tools, `search_knowledge` und `get_document`, über stdio und
-  Streamable HTTP. Der HTTP-Endpunkt hat selbst keine Authentifizierung oder TLS.
+  Streamable HTTP. Im historischen Ausgangsstand hatte der HTTP-Endpunkt selbst
+  keine Authentifizierung oder TLS.
   Ein eingerichteter ChatGPT-Client oder ein aktuell geschützter Tunnel ist aus dem
   Repository nicht belegt; das Smoke-Skript unterstützt optionale Cloudflare-Access-Header.
+  Der aktuelle Bearer-Vertrag steht unten.
 - Gesprächsverlauf, Zusammenfassungen, Themenrouting und Proposals mit dauerhafter
   Speicherung; Telegram als Eingabe-/Chat-Client und ein OpenAI-kompatibler LLM-Adapter.
 - Authentifizierter Browser-Review mit vollständigem Diff und revisionsgebundener
@@ -76,6 +78,10 @@ gesichert werden können; Name, Migration und Backupbetrieb sind noch festzulege
 Bis zu einer gesonderten Migration bleibt vorhandenes `knowledge/` kanonisch.
 
 ## Entwicklung und Betrieb
+
+Der aktuelle MCP-HTTP-Zugang verlangt eine serverseitig geprüfte
+Maschinenberechtigung und erlaubt zunächst nur kanonisches Markdown.
+[Vertrag, Konfiguration und lokale Grenze](docs/mcp-http-access.md).
 
 - [Lokale Einrichtung, Start, MCP und Retrieval-Evaluation](docs/local-development.md)
   mit Python ab 3.11, pip und PostgreSQL/pgvector.

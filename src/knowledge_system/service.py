@@ -86,6 +86,7 @@ class KnowledgeService:
         query: str,
         mode: RetrievalMode = "quality",
         limit: int = 5,
+        source_ids: frozenset[str] | None = None,
     ) -> list[KnowledgeSearchResult]:
         if mode not in ("fast", "quality"):
             raise ValueError(f"Unknown retrieval mode `{mode}`. Allowed: fast, quality")
@@ -98,6 +99,7 @@ class KnowledgeService:
                     limit=limit,
                     text_config="german",
                     verbose=self.verbose,
+                    **({"source_ids": source_ids} if source_ids is not None else {}),
                 )
                 return [self._to_service_result(result, mode) for result in results]
 
@@ -107,6 +109,7 @@ class KnowledgeService:
                 limit=max(QUALITY_CANDIDATE_LIMIT, limit),
                 text_config="german",
                 verbose=self.verbose,
+                **({"source_ids": source_ids} if source_ids is not None else {}),
             )
             results = self._get_reranker().rerank(query, candidates, limit=limit)
             return [self._to_service_result(result, mode) for result in results]

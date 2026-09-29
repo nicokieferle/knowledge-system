@@ -4,12 +4,16 @@ import logging
 from dataclasses import dataclass
 from typing import Literal
 
+import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
+from starlette.types import ASGIApp
 
 from .config import MCPServerSettings, get_mcp_server_settings, get_settings
+from .mcp_http_auth import BearerAuthApp
+from .proposal_review import InvalidTarget
 from .service import (
     InvalidSourcePathError,
     KnowledgeIndexUnavailableError,
@@ -19,6 +23,7 @@ from .service import (
     SourceDocumentNotFoundError,
     UnknownSourceError,
 )
+from .sources import DEFAULT_GIT_SOURCE_ID, validate_source_target
 
 LOGGER = logging.getLogger(__name__)
 MIN_SEARCH_LIMIT = 1
@@ -49,7 +54,10 @@ class GetDocumentResponse:
     content: str
 
 
-def create_mcp_server(service: KnowledgeService | None = None) -> MCPServer:
+def create_mcp_server(
+    service: KnowledgeService | None = None,
+    allowed_source_ids: frozenset[str] | None = None,
+) -> MCPServer:
     """Create one MCP server whose tools share one long-lived service instance."""
     knowledge_service = (
         service if service is not None else KnowledgeService(get_settings(), verbose=False)
@@ -84,7 +92,13 @@ def create_mcp_server(service: KnowledgeService | None = None) -> MCPServer:
             raise ToolError(f"limit must be between {MIN_SEARCH_LIMIT} and {MAX_SEARCH_LIMIT}")
 
         try:
-            results = knowledge_service.search(normalized_query, mode=mode, limit=limit)
+            if allowed_source_ids is None:
+                results = knowledge_service.search(normalized_query, mode=mode, limit=limit)
+            else:
+                results = knowledge_service.search(
+                    normalized_query, mode=mode, limit=limit, source_ids=allowed_source_ids
+                )
+                results = [result for result in results if result.source_id in allowed_source_ids]
         except KnowledgeIndexUnavailableError as exc:
             LOGGER.exception("Knowledge index unavailable during search")
             raise ToolError(
@@ -109,6 +123,13 @@ def create_mcp_server(service: KnowledgeService | None = None) -> MCPServer:
         its original context. `source_id` and `source_path` must come from a search result;
         arbitrary operating-system paths are not accepted.
         """
+        if allowed_source_ids is not None:
+            if source_id not in allowed_source_ids:
+                raise ToolError("Source is not available")
+            try:
+                validate_source_target(source_id, source_path)
+            except InvalidTarget as exc:
+                raise ToolError("Invalid source path") from exc
         try:
             document = knowledge_service.get_document(
                 source_id=source_id,
@@ -186,20 +207,38 @@ def run_mcp_server(
     transport_security: TransportSecuritySettings | None = None,
 ) -> None:
     resolved_settings = settings or get_mcp_server_settings()
-    server = create_mcp_server(service)
 
     if resolved_settings.transport == "stdio":
+        server = create_mcp_server(service)
         server.run(transport="stdio")
         return
 
+    if not resolved_settings.http_client_id or len(resolved_settings.http_bearer_token) < 32:
+        raise ValueError("MCP HTTP machine credentials are required")
     security = transport_security or create_transport_security(resolved_settings)
-    server.run(
-        transport="streamable-http",
+    server = create_mcp_server(service, allowed_source_ids=frozenset({DEFAULT_GIT_SOURCE_ID}))
+    app = create_http_app(server, resolved_settings, security)
+    uvicorn.run(
+        app,
         host=resolved_settings.host,
         port=resolved_settings.port,
-        streamable_http_path=resolved_settings.path,
+        access_log=False,
+    )
+
+
+def create_http_app(
+    server: MCPServer,
+    settings: MCPServerSettings,
+    security: TransportSecuritySettings,
+) -> ASGIApp:
+    if not settings.http_client_id or len(settings.http_bearer_token) < 32:
+        raise ValueError("MCP HTTP machine credentials are required")
+    app = server.streamable_http_app(
+        streamable_http_path=settings.path,
+        host=settings.host,
         transport_security=security,
     )
+    return BearerAuthApp(app, settings.http_client_id, settings.http_bearer_token)
 
 
 def main() -> None:

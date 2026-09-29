@@ -126,7 +126,7 @@ class GitMarkdownSource:
         return self._read_path(path)
 
     def _is_indexable_path(self, path: Path) -> bool:
-        if not path.is_file():
+        if not path.is_file() or path.suffix != ".md":
             return False
         try:
             relative = path.relative_to(self.root)

@@ -100,6 +100,7 @@ def keyword_search(
     limit: int = 5,
     text_config: str = "german",
     verbose: bool = True,
+    source_ids: frozenset[str] | None = None,
 ) -> list[SearchResult]:
     text_config = _validate_text_search_config(text_config)
     query = query.strip()
@@ -136,10 +137,19 @@ def keyword_search(
             FROM chunks, query
             WHERE query.tsquery IS NOT NULL
                 AND query.tsquery @@ to_tsvector(%s::regconfig, heading_path || ' ' || content)
+                AND (%s::text[] IS NULL OR source_id = ANY(%s::text[]))
             ORDER BY rank DESC, source_path, ordinal
             LIMIT %s
             """,
-            (text_config, query, text_config, text_config, limit),
+            (
+                text_config,
+                query,
+                text_config,
+                text_config,
+                sorted(source_ids) if source_ids is not None else None,
+                sorted(source_ids) if source_ids is not None else None,
+                limit,
+            ),
         ).fetchall()
 
     if verbose:

@@ -114,8 +114,10 @@ Schnittstellen erzwingen zusätzlich Ownership und konkrete Freigabe im Backend.
 
 **Akzeptanz:** Fehlende Identität, fremde Ressourcen oder manipulierte Clientangaben
 gewähren keinen Zugriff. Browser-Mutationen benötigen gültige Sitzung und CSRF-Schutz.
-Der vorhandene unauthentifizierte MCP-HTTP-Endpunkt bleibt innerhalb seiner lokalen
-Vertrauensgrenze; eine Host-/Origin-Allowlist ersetzt keine Authentifizierung.
+Der MCP-HTTP-Endpunkt erzwingt eine eigene Maschinenberechtigung und bleibt innerhalb
+seiner lokalen Vertrauensgrenze; eine Host-/Origin-Allowlist ersetzt keine
+Authentifizierung. Der vorher unauthentifizierte Zustand ist im Ausgangscommit
+`3384fd938ddd2195593d06d05d900bf3c098b31f` nachvollziehbar.
 
 ### KS-SEC-002
 
