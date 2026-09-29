@@ -72,12 +72,53 @@ def test_git_markdown_source_get_document_reads_original_source(tmp_path: Path) 
     assert "Original." in document.content
 
 
-def test_git_markdown_source_does_not_read_non_markdown_file(tmp_path: Path) -> None:
+def test_git_markdown_source_rejects_non_markdown_file(tmp_path: Path) -> None:
     root = tmp_path / "knowledge"
     root.mkdir()
     (root / "private.txt").write_text("Synthetic private text", encoding="utf-8")
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ValueError):
         GitMarkdownSource(root).get_document("private.txt")
+
+
+def test_readable_discovery_includes_unicode_but_rejects_symlinks(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    (root / "notizen").mkdir(parents=True)
+    original = root / "notizen" / "überblick.md"
+    original.write_text("# Synthetischer Überblick\n", encoding="utf-8")
+    (root / "alias.md").symlink_to(original)
+    (root / "verweis").symlink_to(root / "notizen", target_is_directory=True)
+
+    source = GitMarkdownSource(root)
+    assert [doc.source_path for doc in source.discover()] == ["notizen/überblick.md"]
+    assert source.get_document("notizen/überblick.md").content == "# Synthetischer Überblick\n"
+    with pytest.raises(InvalidTarget):
+        source.snapshot("knowledge-git", "notizen/überblick.md")
+    for path in ("alias.md", "verweis/überblick.md"):
+        with pytest.raises(FileNotFoundError):
+            source.get_document(path)
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        "../secret.md",
+        "notizen/../note.md",
+        "notizen//note.md",
+        "./note.md",
+        "/note.md",
+        ".private.md",
+        "notizen/.private.md",
+        "README.md",
+        "note.txt",
+        "note.md\x00",
+    ],
+)
+def test_read_path_rejects_unsafe_or_non_indexable_names(tmp_path: Path, source_path: str) -> None:
+    root = tmp_path / "knowledge"
+    root.mkdir()
+    (root / "note.md").write_text("# Safe\n", encoding="utf-8")
+    with pytest.raises((ValueError, FileNotFoundError)):
+        GitMarkdownSource(root).get_document(source_path)
 
 
 def test_portable_lock_identity_uses_the_validated_case_namespace() -> None:

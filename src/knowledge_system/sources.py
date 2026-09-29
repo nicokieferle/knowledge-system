@@ -11,6 +11,23 @@ ROOT_MARKDOWN_EXCLUDES = {"README.md"}
 DEFAULT_GIT_SOURCE_ID = "knowledge-git"
 
 
+def validate_read_source_path(source_path: str) -> list[str]:
+    """Validate the exact relative Markdown path emitted by discovery."""
+    if not isinstance(source_path, str) or not source_path or "\x00" in source_path:
+        raise ValueError("Invalid source path")
+    parts = source_path.split("/")
+    if (
+        Path(source_path).is_absolute()
+        or bool(Path(source_path).drive)
+        or Path(source_path).as_posix() != source_path
+        or source_path in ROOT_MARKDOWN_EXCLUDES
+        or not source_path.endswith(".md")
+        or any(not part or part in {".", ".."} or part.startswith(".") for part in parts)
+    ):
+        raise ValueError("Invalid source path")
+    return parts
+
+
 def validate_source_target(source_id: str, source_path: str) -> list[str]:
     """Validate the portable review/apply namespace and return its components."""
     from .proposal_review import InvalidTarget
@@ -114,16 +131,26 @@ class GitMarkdownSource:
             raise FileNotFoundError(f"Knowledge root does not exist: {self.root}")
 
         return [
-            self._read_path(path)
+            self.get_document(path.relative_to(self.root).as_posix())
             for path in sorted(self.root.rglob("*.md"))
             if self._is_indexable_path(path)
         ]
 
     def get_document(self, source_path: str) -> SourceDocument:
-        path = self._resolve_source_path(source_path)
+        parts = validate_read_source_path(source_path)
+        path = self.root.joinpath(*parts)
         if not self._is_indexable_path(path):
             raise FileNotFoundError(f"Source document is not indexable: {source_path}")
-        return self._read_path(path)
+        if os.name == "posix":
+            content = self._read_posix(parts)
+        else:
+            content = path.read_text(encoding="utf-8")
+        return SourceDocument(
+            source_id=self.source_id,
+            source_path=source_path,
+            content=content,
+            metadata={"path": source_path},
+        )
 
     def _is_indexable_path(self, path: Path) -> bool:
         if not path.is_file() or path.suffix != ".md":
@@ -133,30 +160,34 @@ class GitMarkdownSource:
         except ValueError:
             return False
         relative_posix = relative.as_posix()
-        return relative_posix not in ROOT_MARKDOWN_EXCLUDES and not any(
-            part.startswith(".") for part in relative.parts
-        )
-
-    def _read_path(self, path: Path) -> SourceDocument:
-        relative_path = path.relative_to(self.root).as_posix()
-        return SourceDocument(
-            source_id=self.source_id,
-            source_path=relative_path,
-            content=path.read_text(encoding="utf-8"),
-            metadata={"path": relative_path},
-        )
-
-    def _resolve_source_path(self, source_path: str) -> Path:
-        if Path(source_path).is_absolute():
-            raise ValueError("source_path must be relative")
-
-        path = (self.root / source_path).resolve()
-        root = self.root.resolve()
         try:
-            path.relative_to(root)
-        except ValueError as exc:
-            raise ValueError(f"source_path escapes source root: {source_path}") from exc
-        return path
+            validate_read_source_path(relative_posix)
+        except ValueError:
+            return False
+        current = self.root
+        for part in relative.parts:
+            current = current / part
+            if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+                return False
+        return True
+
+    def _read_posix(self, parts: list[str]) -> str:
+        """Read through pinned directories without following a symlink."""
+        directory = os.open(self.root.resolve(strict=True), os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            for part in parts[:-1]:
+                child = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                )
+                os.close(directory)
+                directory = child
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            with os.fdopen(fd, "r", encoding="utf-8") as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise ValueError("Source document is not a regular file")
+                return handle.read()
+        finally:
+            os.close(directory)
 
     def snapshot(self, source_id: str, source_path: str) -> tuple[str, str | None]:
         """Strict review read, including absent targets; never creates directories/files.

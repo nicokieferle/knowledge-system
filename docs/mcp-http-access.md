@@ -21,10 +21,20 @@ alternative Credentials und Query-Parameter werden abgewiesen.
 
 Für diese Stufe ist nur `knowledge-git` freigegeben. Suche filtert die Quelle
 bereits in der Indexabfrage und prüft das Ergebnis erneut. `get_document` prüft
-Quell-ID und den kanonischen logischen Markdown-Pfad vor dem Quellenadapter.
+Quell-ID und den lesenden logischen Markdown-Pfad vor dem Quellenadapter.
 Andere registrierte Quellen bleiben gesperrt; ihre Freigabe benötigt eine neue
 ausdrückliche Code-/Vertragsänderung. stdio bleibt der bisherige lokale Zugang
 und nutzt diesen HTTP-Principal nicht.
+
+Der lesende Pfad ist der exakte, relative `/`-Pfad, den `GitMarkdownSource.discover`
+für eine reguläre `.md`-Datei unter dem konfigurierten Wissensroot ausgibt. Unicode
+und Leerzeichen in Dateinamen sind zulässig; Pfade werden nicht normalisiert oder
+umbenannt. Absolute Pfade, leere, `.`-, `..`- und versteckte Komponenten, andere
+Endungen sowie die Root-`README.md` sind ausgeschlossen. Symlinks und Junctions
+innerhalb des Root werden weder indexiert noch gelesen; der POSIX-Abruf öffnet
+Verzeichnisse und Datei ohne Symlink-Folgen. Der konfigurierte Root selbst bleibt
+eine vertrauenswürdige lokale Konfiguration. Die strengere portable ASCII-Grenze
+von Review/Apply gilt weiterhin für Schreibziele und wird hier nicht erweitert.
 
 Fehlende, falsche oder mehrdeutige Berechtigungsnachweise liefern HTTP 401 mit
 `WWW-Authenticate: Bearer` und ohne Dokumentinhalt. Unbekannte, nicht freigegebene

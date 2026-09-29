@@ -825,6 +825,87 @@ def test_authenticated_http_limits_tools_sources_and_paths(tmp_path: Path, monke
     assert unavailable.is_error is True
 
 
+def test_http_search_hit_with_unicode_path_can_be_read_as_original(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root = tmp_path / "knowledge"
+    (root / "notizen").mkdir(parents=True)
+    original = "# Synthetischer Überblick\n\nOriginalinhalt.\n"
+    (root / "notizen" / "überblick.md").write_text(original, encoding="utf-8")
+    outside = tmp_path / "outside.md"
+    outside.write_text("Outside synthetic content", encoding="utf-8")
+    (root / "outside-link.md").symlink_to(outside)
+    (root / "alias").symlink_to(root / "notizen", target_is_directory=True)
+
+    source = GitMarkdownSource(root)
+    indexed = source.discover()
+    assert [doc.source_path for doc in indexed] == ["notizen/überblick.md"]
+
+    def fake_keyword_search(settings, query, limit, text_config, verbose, source_ids=None):
+        assert source_ids == frozenset({"knowledge-git"})
+        return [
+            SearchResult(
+                chunk_key="synthetic-unicode",
+                source_id=indexed[0].source_id,
+                source_path=indexed[0].source_path,
+                heading_path="Synthetischer Überblick",
+                content="Synthetic search excerpt",
+                similarity=0.9,
+            )
+        ]
+
+    monkeypatch.setattr("knowledge_system.service.keyword_search", fake_keyword_search)
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=root,
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    service = KnowledgeService(settings, sources=[source], verbose=False)
+    server = create_mcp_server(service, allowed_source_ids=frozenset({"knowledge-git"}))
+    token = "s" * 32
+
+    async def scenario(url: str):
+        async with (
+            httpx2.AsyncClient(headers={"Authorization": f"Bearer {token}"}) as http_client,
+            Client(
+                streamable_http_client(f"{url}/mcp", http_client=http_client), mode="legacy"
+            ) as client,
+        ):
+            search = await client.call_tool(
+                "search_knowledge", {"query": "Überblick", "mode": "fast"}
+            )
+            hit = search.structured_content["results"][0]
+            document = await client.call_tool(
+                "get_document", {"source_id": hit["source_id"], "source_path": hit["source_path"]}
+            )
+            rejected = [
+                await client.call_tool(
+                    "get_document", {"source_id": "knowledge-git", "source_path": path}
+                )
+                for path in (
+                    "../outside.md",
+                    "notizen/../notizen/überblick.md",
+                    "outside-link.md",
+                    "alias/überblick.md",
+                )
+            ]
+            return search, document, rejected
+
+    with _running_http_server(server, token=token) as url:
+        search, document, rejected = _call(scenario(url))
+
+    assert search.is_error is False
+    assert document.structured_content == {
+        "source_id": "knowledge-git",
+        "source_path": "notizen/überblick.md",
+        "content": original,
+    }
+    assert all(result.is_error for result in rejected)
+    assert all(original not in _result_text(result) for result in rejected)
+    assert all("Outside synthetic content" not in _result_text(result) for result in rejected)
+
+
 def test_http_auth_rejects_missing_wrong_duplicate_and_alternate_credentials() -> None:
     token = "s" * 32
     service = FakeKnowledgeService()
