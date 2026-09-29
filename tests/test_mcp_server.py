@@ -16,6 +16,7 @@ import pytest
 import uvicorn
 from mcp import Client, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.server import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import TextContent
@@ -26,6 +27,7 @@ from knowledge_system.config import (
     get_mcp_server_settings,
 )
 from knowledge_system.mcp_server import (
+    create_http_app,
     create_loopback_transport_security,
     create_mcp_server,
     create_transport_security,
@@ -47,7 +49,9 @@ class FakeKnowledgeService:
         self.search_calls: list[tuple[str, str, int]] = []
         self.document_calls: list[tuple[str, str]] = []
 
-    def search(self, query: str, mode: str, limit: int) -> list[KnowledgeSearchResult]:
+    def search(
+        self, query: str, mode: str, limit: int, source_ids: frozenset[str] | None = None
+    ) -> list[KnowledgeSearchResult]:
         self.search_calls.append((query, mode, limit))
         return [
             KnowledgeSearchResult(
@@ -125,14 +129,28 @@ def _free_port() -> int:
 def _running_http_server(
     server: MCPServer,
     path: str = "/mcp",
+    token: str | None = None,
 ) -> Iterator[str]:
     host = "127.0.0.1"
     port = _free_port()
-    app = server.streamable_http_app(
-        streamable_http_path=path,
-        host=host,
-        transport_security=create_loopback_transport_security(host, port),
-    )
+    security = create_loopback_transport_security(host, port)
+    if token is None:
+        app = server.streamable_http_app(
+            streamable_http_path=path, host=host, transport_security=security
+        )
+    else:
+        app = create_http_app(
+            server,
+            MCPServerSettings(
+                transport="streamable-http",
+                host=host,
+                port=port,
+                path=path,
+                http_client_id="test-client",
+                http_bearer_token=token,
+            ),
+            security,
+        )
     uvicorn_server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -203,6 +221,8 @@ def test_mcp_server_settings_default_to_stdio_and_local_http(
         "MCP_PATH",
         "MCP_ALLOWED_HOSTS",
         "MCP_ALLOWED_ORIGINS",
+        "MCP_HTTP_CLIENT_ID",
+        "MCP_HTTP_BEARER_TOKEN",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -224,6 +244,8 @@ def test_mcp_server_settings_read_streamable_http_environment(monkeypatch, tmp_p
     monkeypatch.setenv("MCP_HOST", "localhost")
     monkeypatch.setenv("MCP_PORT", "8123")
     monkeypatch.setenv("MCP_PATH", "/knowledge")
+    monkeypatch.setenv("MCP_HTTP_CLIENT_ID", "test-client")
+    monkeypatch.setenv("MCP_HTTP_BEARER_TOKEN", "a" * 32)
 
     settings = get_mcp_server_settings()
 
@@ -232,6 +254,8 @@ def test_mcp_server_settings_read_streamable_http_environment(monkeypatch, tmp_p
         host="localhost",
         port=8123,
         path="/knowledge",
+        http_client_id="test-client",
+        http_bearer_token="a" * 32,
     )
 
 
@@ -320,30 +344,28 @@ def test_run_mcp_server_keeps_stdio_as_default(monkeypatch) -> None:
 
 
 def test_run_mcp_server_passes_http_options_and_security(monkeypatch) -> None:
-    class FakeServer:
-        def __init__(self) -> None:
-            self.calls: list[tuple[str, dict[str, object]]] = []
-
-        def run(self, transport: str, **kwargs: object) -> None:
-            self.calls.append((transport, kwargs))
-
-    server = FakeServer()
-    monkeypatch.setattr("knowledge_system.mcp_server.create_mcp_server", lambda service: server)
+    calls = []
+    monkeypatch.setattr(
+        "knowledge_system.mcp_server.uvicorn.run",
+        lambda app, **kwargs: calls.append((app, kwargs)),
+    )
     settings = MCPServerSettings(
         transport="streamable-http",
         host="127.0.0.1",
         port=8123,
         path="/knowledge",
+        http_client_id="test-client",
+        http_bearer_token="a" * 32,
     )
 
-    run_mcp_server(settings)
+    run_mcp_server(settings, service=FakeKnowledgeService())
 
-    transport, options = server.calls[0]
-    security = options["transport_security"]
-    assert transport == "streamable-http"
-    assert options["host"] == "127.0.0.1"
-    assert options["port"] == 8123
-    assert options["streamable_http_path"] == "/knowledge"
+    app, options = calls[0]
+    security = create_transport_security(settings)
+    assert app.client_id == "test-client"
+    assert app.token == "a" * 32
+    assert options == {"host": "127.0.0.1", "port": 8123, "access_log": False}
+    assert any(route.path == "/knowledge" for route in app.app.routes)
     assert isinstance(security, TransportSecuritySettings)
     assert security.enable_dns_rebinding_protection is True
     assert "127.0.0.1:8123" in security.allowed_hosts
@@ -352,41 +374,32 @@ def test_run_mcp_server_passes_http_options_and_security(monkeypatch) -> None:
 
 
 def test_non_loopback_host_requires_explicit_allowlist(monkeypatch) -> None:
-    class FakeServer:
-        def run(self, transport: str, **kwargs: object) -> None:
-            raise AssertionError("Server must not start without explicit security")
-
-    monkeypatch.setattr(
-        "knowledge_system.mcp_server.create_mcp_server",
-        lambda service: FakeServer(),
-    )
     settings = MCPServerSettings(
         transport="streamable-http",
         host="0.0.0.0",
         port=8000,
         path="/mcp",
+        http_client_id="test-client",
+        http_bearer_token="a" * 32,
     )
 
     with pytest.raises(ValueError, match="explicit TransportSecuritySettings"):
-        run_mcp_server(settings)
+        run_mcp_server(settings, service=FakeKnowledgeService())
 
 
 def test_non_loopback_host_accepts_explicit_allowlist(monkeypatch) -> None:
-    class FakeServer:
-        def __init__(self) -> None:
-            self.options: dict[str, object] = {}
-
-        def run(self, transport: str, **kwargs: object) -> None:
-            assert transport == "streamable-http"
-            self.options = kwargs
-
-    server = FakeServer()
-    monkeypatch.setattr("knowledge_system.mcp_server.create_mcp_server", lambda service: server)
+    calls = []
+    monkeypatch.setattr(
+        "knowledge_system.mcp_server.uvicorn.run",
+        lambda app, **kwargs: calls.append((app, kwargs)),
+    )
     settings = MCPServerSettings(
         transport="streamable-http",
         host="0.0.0.0",
         port=8000,
         path="/mcp",
+        http_client_id="test-client",
+        http_bearer_token="a" * 32,
     )
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
@@ -394,22 +407,17 @@ def test_non_loopback_host_accepts_explicit_allowlist(monkeypatch) -> None:
         allowed_origins=["https://mcp.example.test"],
     )
 
-    run_mcp_server(settings, transport_security=security)
+    run_mcp_server(settings, service=FakeKnowledgeService(), transport_security=security)
 
-    assert server.options["transport_security"] is security
+    assert calls[0][1]["host"] == "0.0.0.0"
 
 
 def test_non_loopback_host_accepts_configured_allowlist(monkeypatch) -> None:
-    class FakeServer:
-        def __init__(self) -> None:
-            self.options: dict[str, object] = {}
-
-        def run(self, transport: str, **kwargs: object) -> None:
-            assert transport == "streamable-http"
-            self.options = kwargs
-
-    server = FakeServer()
-    monkeypatch.setattr("knowledge_system.mcp_server.create_mcp_server", lambda service: server)
+    calls = []
+    monkeypatch.setattr(
+        "knowledge_system.mcp_server.uvicorn.run",
+        lambda app, **kwargs: calls.append((app, kwargs)),
+    )
     settings = MCPServerSettings(
         transport="streamable-http",
         host="0.0.0.0",
@@ -420,14 +428,16 @@ def test_non_loopback_host_accepts_configured_allowlist(monkeypatch) -> None:
             "http://127.0.0.1:8000",
             "http://localhost:8000",
         ),
+        http_client_id="test-client",
+        http_bearer_token="a" * 32,
     )
 
-    run_mcp_server(settings)
+    run_mcp_server(settings, service=FakeKnowledgeService())
 
-    security = server.options["transport_security"]
+    security = create_transport_security(settings)
     assert isinstance(security, TransportSecuritySettings)
-    assert security == create_transport_security(settings)
     assert security.allowed_hosts == ["127.0.0.1:8000", "localhost:8000"]
+    assert calls[0][1]["access_log"] is False
 
 
 def test_search_knowledge_schema_and_structured_fast_quality_results() -> None:
@@ -698,3 +708,174 @@ def test_streamable_http_uses_same_tools_service_and_lazy_reranker(monkeypatch) 
     assert invalid_host.status_code == 421
     assert invalid_host.text == "Invalid Host header"
     assert wrong_path.status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("client_id", "token"),
+    [("", "a" * 32), ("machine", ""), ("machine", "short"), ("bad id", "a" * 32)],
+)
+def test_http_settings_fail_closed_without_machine_credentials(
+    monkeypatch, tmp_path: Path, client_id: str, token: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("MCP_TRANSPORT", "streamable-http")
+    monkeypatch.setenv("MCP_HTTP_CLIENT_ID", client_id)
+    monkeypatch.setenv("MCP_HTTP_BEARER_TOKEN", token)
+    with pytest.raises(ValueError, match="MCP_HTTP_CLIENT_ID"):
+        get_mcp_server_settings()
+
+
+def test_authenticated_http_limits_tools_sources_and_paths(tmp_path: Path, monkeypatch) -> None:
+    token = "s" * 32
+    knowledge_root = tmp_path / "knowledge"
+    (knowledge_root / "economics").mkdir(parents=True)
+    (knowledge_root / "economics" / "inflation.md").write_text(
+        "# Synthetic inflation\n\nOriginal synthetic document.", encoding="utf-8"
+    )
+    (knowledge_root / "economics" / "missing.txt").write_text(
+        "Private synthetic text", encoding="utf-8"
+    )
+
+    queries = []
+
+    def fake_keyword_search(settings, query, limit, text_config, verbose, source_ids=None):
+        queries.append(source_ids)
+        return [
+            SearchResult(
+                chunk_key="allowed",
+                source_id="knowledge-git",
+                source_path="economics/inflation.md",
+                heading_path="Synthetic",
+                content="Allowed synthetic chunk",
+                similarity=0.8,
+            ),
+            SearchResult(
+                chunk_key="forbidden",
+                source_id="private-source",
+                source_path="secret.md",
+                heading_path="Private",
+                content="Forbidden synthetic chunk",
+                similarity=0.9,
+            ),
+        ]
+
+    monkeypatch.setattr("knowledge_system.service.keyword_search", fake_keyword_search)
+    settings = Settings(
+        database_url="postgresql://example",
+        knowledge_root=knowledge_root,
+        embedding_model="model",
+        embedding_dimensions=384,
+    )
+    service = KnowledgeService(settings, sources=[GitMarkdownSource(knowledge_root)], verbose=False)
+    server = create_mcp_server(service, allowed_source_ids=frozenset({"knowledge-git"}))
+
+    async def scenario(url: str):
+        async with (
+            httpx2.AsyncClient(
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-MCP-Client-ID": "forged-admin",
+                    "X-MCP-Source-IDs": "private-source",
+                }
+            ) as http_client,
+            Client(
+                streamable_http_client(f"{url}/mcp", http_client=http_client), mode="legacy"
+            ) as client,
+        ):
+            listed = await client.list_tools()
+            search = await client.call_tool(
+                "search_knowledge", {"query": "synthetic", "mode": "fast"}
+            )
+            document = await client.call_tool(
+                "get_document",
+                {"source_id": "knowledge-git", "source_path": "economics/inflation.md"},
+            )
+            rejected = []
+            for source_id, source_path in [
+                ("unknown", "economics/inflation.md"),
+                ("private-source", "secret.md"),
+                ("knowledge-git", "economics/missing.md"),
+                ("knowledge-git", "economics/missing.txt"),
+                ("knowledge-git", "../secret.md"),
+                ("knowledge-git", "/etc/passwd"),
+            ]:
+                rejected.append(
+                    await client.call_tool(
+                        "get_document", {"source_id": source_id, "source_path": source_path}
+                    )
+                )
+            unavailable = await client.call_tool("apply_accepted_revision", {})
+            return listed, search, document, rejected, unavailable
+
+    with _running_http_server(server, token=token) as url:
+        listed, search, document, rejected, unavailable = _call(scenario(url))
+
+    assert [tool.name for tool in listed.tools] == ["search_knowledge", "get_document"]
+    assert queries == [frozenset({"knowledge-git"})]
+    assert search.structured_content["results"][0]["source_id"] == "knowledge-git"
+    assert len(search.structured_content["results"]) == 1
+    assert "Forbidden synthetic chunk" not in str(search.structured_content)
+    assert document.structured_content == {
+        "source_id": "knowledge-git",
+        "source_path": "economics/inflation.md",
+        "content": "# Synthetic inflation\n\nOriginal synthetic document.",
+    }
+    assert all(result.is_error for result in rejected)
+    assert all("Original synthetic document" not in _result_text(result) for result in rejected)
+    assert unavailable.is_error is True
+
+
+def test_http_auth_rejects_missing_wrong_duplicate_and_alternate_credentials() -> None:
+    token = "s" * 32
+    service = FakeKnowledgeService()
+    server = create_mcp_server(service, allowed_source_ids=frozenset({"knowledge-git"}))
+
+    async def scenario(url: str):
+        responses = []
+        cases = [
+            ({}, ""),
+            ({"Authorization": "Bearer " + "x" * 32}, ""),
+            ({"Authorization": "Basic " + token}, ""),
+            ({"Authorization": "Bearer " + token + ", Bearer " + token}, ""),
+            ({"Authorization": "Bearer " + token, "X-Api-Key": "other"}, ""),
+            ({"Authorization": "Bearer " + token}, "?access_token=other"),
+            ({"X-MCP-Client-ID": "test-client", "X-MCP-Source-IDs": "knowledge-git"}, ""),
+        ]
+        async with httpx2.AsyncClient() as client:
+            for headers, suffix in cases:
+                responses.append(
+                    await client.post(
+                        f"{url}/mcp{suffix}",
+                        headers=headers,
+                        json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                    )
+                )
+            duplicate = await client.post(
+                f"{url}/mcp",
+                headers=[("Authorization", f"Bearer {token}"), ("Authorization", "Bearer other")],
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            )
+            forbidden_document = await client.post(
+                f"{url}/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "get_document",
+                        "arguments": {
+                            "source_id": "knowledge-git",
+                            "source_path": "economics/inflation.md",
+                        },
+                    },
+                },
+            )
+        return responses + [duplicate, forbidden_document]
+
+    with _running_http_server(server, token=token) as url:
+        responses = _call(scenario(url))
+    assert all(response.status_code == 401 for response in responses)
+    assert all(response.text == "Unauthorized" for response in responses)
+    assert all(response.headers["www-authenticate"] == "Bearer" for response in responses)
+    assert service.search_calls == []
+    assert service.document_calls == []

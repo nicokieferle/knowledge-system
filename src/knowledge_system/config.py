@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -43,6 +43,8 @@ class MCPServerSettings:
     path: str
     allowed_hosts: tuple[str, ...] = ()
     allowed_origins: tuple[str, ...] = ()
+    http_client_id: str = ""
+    http_bearer_token: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,22 @@ def get_mcp_server_settings() -> MCPServerSettings:
     if allowed_origins and not allowed_hosts:
         raise ValueError("MCP_ALLOWED_ORIGINS requires MCP_ALLOWED_HOSTS")
 
+    http_client_id = os.getenv("MCP_HTTP_CLIENT_ID", "").strip()
+    http_bearer_token = os.getenv("MCP_HTTP_BEARER_TOKEN", "")
+    if transport == "streamable-http":
+        if not http_client_id or not http_bearer_token or len(http_bearer_token) < 32:
+            raise ValueError(
+                "MCP_HTTP_CLIENT_ID and a bearer token of at least 32 characters are required"
+            )
+        if not http_client_id.isascii() or not all(
+            char.isalnum() or char in "_-" for char in http_client_id
+        ):
+            raise ValueError("MCP_HTTP_CLIENT_ID must contain only ASCII letters, digits, _ or -")
+        if not http_bearer_token.isascii() or any(
+            char.isspace() or not char.isprintable() for char in http_bearer_token
+        ):
+            raise ValueError("MCP_HTTP_BEARER_TOKEN must be printable ASCII without whitespace")
+
     return MCPServerSettings(
         transport=cast(MCPTransport, transport),
         host=host,
@@ -143,6 +161,8 @@ def get_mcp_server_settings() -> MCPServerSettings:
         path=path,
         allowed_hosts=allowed_hosts,
         allowed_origins=allowed_origins,
+        http_client_id=http_client_id,
+        http_bearer_token=http_bearer_token,
     )
 
 

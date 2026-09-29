@@ -28,6 +28,9 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _access_headers() -> dict[str, str]:
+    token = os.getenv("MCP_HTTP_BEARER_TOKEN", "")
+    if not token:
+        raise RuntimeError("MCP_HTTP_BEARER_TOKEN is required for the MCP HTTP smoke test")
     client_id = os.getenv("CF_ACCESS_CLIENT_ID")
     client_secret = os.getenv("CF_ACCESS_CLIENT_SECRET")
 
@@ -37,13 +40,11 @@ def _access_headers() -> dict[str, str]:
             "must either both be set or both be unset"
         )
 
-    if not client_id or not client_secret:
-        return {}
-
-    return {
-        "CF-Access-Client-Id": client_id,
-        "CF-Access-Client-Secret": client_secret,
-    }
+    headers = {"Authorization": f"Bearer {token}"}
+    if client_id and client_secret:
+        headers["CF-Access-Client-Id"] = client_id
+        headers["CF-Access-Client-Secret"] = client_secret
+    return headers
 
 
 def _require_result(result: Any, tool_name: str) -> dict[str, Any]:
@@ -138,7 +139,8 @@ async def _run(
 
     return {
         "url": url,
-        "cloudflare_access": bool(headers),
+        "machine_auth": True,
+        "cloudflare_access": "CF-Access-Client-Id" in headers,
         "tools": tool_names,
         "fast": {
             "seconds": round(fast_seconds, 3),

@@ -86,6 +86,23 @@ def test_keyword_search_handles_empty_query_without_sql(monkeypatch) -> None:
     assert fake_conn.calls == []
 
 
+def test_keyword_search_applies_source_scope_before_limit(monkeypatch) -> None:
+    fake_conn = FakeConnection()
+
+    @contextmanager
+    def fake_connect(settings: Settings):
+        yield fake_conn
+
+    monkeypatch.setattr("knowledge_system.search.connect", fake_connect)
+    keyword_search(
+        _settings(), "synthetic", limit=3, verbose=False, source_ids=frozenset({"knowledge-git"})
+    )
+
+    sql, params = fake_conn.calls[0]
+    assert sql.index("source_id = ANY") < sql.index("ORDER BY") < sql.index("LIMIT")
+    assert params[-3:] == (["knowledge-git"], ["knowledge-git"], 3)
+
+
 def test_keyword_search_accepts_unusual_keyword_query(monkeypatch) -> None:
     fake_conn = FakeConnection()
 

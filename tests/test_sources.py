@@ -72,6 +72,14 @@ def test_git_markdown_source_get_document_reads_original_source(tmp_path: Path) 
     assert "Original." in document.content
 
 
+def test_git_markdown_source_does_not_read_non_markdown_file(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge"
+    root.mkdir()
+    (root / "private.txt").write_text("Synthetic private text", encoding="utf-8")
+    with pytest.raises(FileNotFoundError):
+        GitMarkdownSource(root).get_document("private.txt")
+
+
 def test_portable_lock_identity_uses_the_validated_case_namespace() -> None:
     assert portable_source_lock_identity("knowledge-git", "Folder/Note.md") == (
         portable_source_lock_identity("knowledge-git", "folder/note.md")

@@ -55,6 +55,12 @@ nicht gerade das Zusammenspiel ersetzen, das der Nachweis behauptet.
   sind synthetische Ersatzkomponenten. Der Smoke prüft Paketimporte, Datenbankzugriff
   und diese Anwendungspfade im Image; er startet weder einen echten Telegram-Client
   noch einen Modellaufruf oder den produktiven MCP-/Browser-End-to-End-Ablauf.
+- `scripts/mcp_http_image_smoke.py` läuft danach im selben Image gegen eine eigene
+  PostgreSQL-Schema-Namespace und temporäres synthetisches Markdown. Der echte
+  MCP-HTTP-Einstiegspunkt, Uvicorn, `KnowledgeService`, PostgreSQL-Keyword-Suche
+  und `GitMarkdownSource` werden mit gültigem, fehlendem und falschem Bearer-Token
+  geprüft. Nur Indexzeilen/Originaldatei sind synthetisch; es gibt keinen Modellaufruf,
+  Remote-Client, TLS-Terminator oder produktiven Serverzugriff.
 - Reale Client-/Provider-, Modell- oder Zielhost-Smokes benötigen einen passenden
   gesonderten Auftrag und isolierte Ressourcen. Fehlende Live-Nachweise ausdrücklich
   nennen; bestandene Teiltests belegen keine umfassende Live-Funktionsfähigkeit.

@@ -65,8 +65,9 @@ Browser-Validierung, zulässige Werte und Sitzungsgrenzen sind im
 V3.3 prüft vor aktiviertem Apply einen vorhandenen sicheren Wissensroot. Die Anwendung
 initialisiert/migriert kein Schema und indexiert nicht automatisch beim Dienststart.
 `/healthz` bestätigt nur den HTTP-Prozess, nicht die Datenbankverbindung.
-Der Server-MCP-Endpunkt ist selbst ohne Auth/TLS; die Loopback-Bindung und Allowlist
-sind keine allgemeine authentifizierte Integrations-API.
+Der aktuelle MCP-HTTP-Code verlangt einen Maschinen-Token; der [Vertrag](mcp-http-access.md)
+beschreibt Principal, Quellenrechte und Fehler. Das ist kein Nachweis einer Einführung
+auf dem Server. TLS und Remote-Netzwerkfreigabe bleiben getrennte Betriebsaufgaben.
 
 ## V3.3 storage and migration gate (not deployed by this change)
 
@@ -187,7 +188,8 @@ write is required for V3.2. MCP remains read-only with the same two tools.
 This deployment keeps `knowledge/` as the canonical knowledge source. PostgreSQL contains a
 disposable, rebuildable retrieval index and, from V3.0 onward, may also contain durable
 conversation and proposal state. It exposes the MCP endpoint only on the Debian host loopback
-interface. It does not provide TLS, authentication or public network access.
+interface. Der aktuelle Code verlangt einen MCP-Maschinen-Token; TLS und öffentlicher
+Netzwerkzugang sind nicht eingerichtet. Dies ist eine Anleitung, kein Rolloutnachweis.
 
 ## Architecture
 
@@ -244,6 +246,10 @@ by Git and excluded from the Docker build context.
 
 Also set `KNOWLEDGE_DATA_ROOT` to the pre-created absolute persistent data path from
 the V3.3 storage gate above. Compose deliberately fails interpolation when it is absent.
+For the current MCP-HTTP code also set `MCP_HTTP_CLIENT_ID` and a separate random
+`MCP_HTTP_BEARER_TOKEN` (at least 32 printable ASCII characters) in the protected
+Compose environment file. Compose refuses an empty value. Keep the token out of
+commands and logs; see [the access contract](mcp-http-access.md).
 
 Build the CPU image and start PostgreSQL:
 
@@ -293,7 +299,7 @@ on the host firewall and available second machine; do not add a public firewall 
 Run the standard MCP v2 client contained in the built image against the host endpoint:
 
 ```bash
-docker run --rm --network host knowledge-system-mcp:local \
+docker compose --env-file .env.server -f compose.server.yml exec -T knowledge-mcp \
   python /app/scripts/mcp_http_smoke.py http://127.0.0.1:8000/mcp
 ```
 
@@ -330,7 +336,7 @@ Restart the service and rerun the MCP smoke test:
 ```bash
 docker compose --env-file .env.server -f compose.server.yml restart knowledge-mcp
 docker compose --env-file .env.server -f compose.server.yml ps
-docker run --rm --network host knowledge-system-mcp:local \
+docker compose --env-file .env.server -f compose.server.yml exec -T knowledge-mcp \
   python /app/scripts/mcp_http_smoke.py http://127.0.0.1:8000/mcp
 ```
 

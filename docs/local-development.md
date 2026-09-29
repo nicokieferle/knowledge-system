@@ -53,6 +53,7 @@ Entwicklungsbeispiele; Werte für persönliche Hosts und Secrets gehören nicht 
 | `MCP_TRANSPORT` | `stdio` (Default) oder `streamable-http`. |
 | `MCP_HOST` / `MCP_PORT` / `MCP_PATH` | Defaults `127.0.0.1`, `8000`, `/mcp`; Port 1–65535, absoluter URL-Pfad ohne Query/Fragment. |
 | `MCP_ALLOWED_HOSTS` / `MCP_ALLOWED_ORIGINS` | Kommagetrennte explizite Allowlist ohne Wildcards; Origins benötigen Hosts. Ohne explizite Hosts gilt Loopback-Schutz. |
+| `MCP_HTTP_CLIENT_ID` / `MCP_HTTP_BEARER_TOKEN` | Für Streamable HTTP verpflichtender serverseitiger Principal und opaker Token (mindestens 32 druckbare ASCII-Zeichen); stdio benötigt sie nicht. Siehe [MCP-HTTP-Vertrag](mcp-http-access.md). |
 | `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` | Für Telegram unterstützt der Start derzeit `openai-compatible`; Modell und geheimer API-Key müssen nichtleer gesetzt sein. |
 | `LLM_BASE_URL` / `LLM_TIMEOUT_SECONDS` | Defaults `https://api.openai.com/v1` und `30`; konfigurierbarer Endpunkt und numerischer Timeout. |
 | `TELEGRAM_BOT_TOKEN` | Für `knowledge-telegram` verpflichtender geheimer Token, getrennt vom Journaling-Bot. |
@@ -99,6 +100,8 @@ $env:MCP_TRANSPORT="streamable-http"
 $env:MCP_HOST="127.0.0.1"
 $env:MCP_PORT="8000"
 $env:MCP_PATH="/mcp"
+$env:MCP_HTTP_CLIENT_ID="external-read"
+$env:MCP_HTTP_BEARER_TOKEN="<lokal erzeugter zufälliger Token>"
 knowledge-mcp
 ```
 
@@ -111,10 +114,12 @@ Es gibt genau zwei Tools: `search_knowledge` sucht ohne Schreib-/Indexoperation;
 dem Suchergebnis. Beliebige Betriebssystempfade sind kein zulässiger Ersatz.
 
 DNS-Rebinding-Schutz und Host-/Origin-Allowlist sind vorhanden. Nicht-Loopback-Bindings
-benötigen explizite Sicherheitskonfiguration. Der Endpunkt implementiert keine
-Authentifizierung oder TLS und ist nicht für direkten öffentlichen Zugriff vorgesehen.
+benötigen explizite Sicherheitskonfiguration. Der Endpunkt verlangt jetzt zusätzlich
+den [serverseitigen Maschinen-Token](mcp-http-access.md). TLS und öffentlicher Zugriff
+sind damit nicht eingerichtet.
 Das [HTTP-Smoke-Skript](../scripts/mcp_http_smoke.py) kann optionale
-`CF_ACCESS_CLIENT_ID`-/`CF_ACCESS_CLIENT_SECRET`-Header senden. Das belegt weder einen
+`CF_ACCESS_CLIENT_ID`-/`CF_ACCESS_CLIENT_SECRET`-Header zusätzlich zum Pflicht-Bearer
+senden. Das belegt weder einen
 aktuell eingerichteten Tunnel noch einen authentifizierten ChatGPT-Client.
 
 ## Gespräch, Telegram und Browser
