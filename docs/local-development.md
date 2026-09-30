@@ -57,6 +57,7 @@ Entwicklungsbeispiele; Werte für persönliche Hosts und Secrets gehören nicht 
 | `LLM_PROVIDER` / `LLM_MODEL` / `LLM_API_KEY` | Für Telegram unterstützt der Start derzeit `openai-compatible`; Modell und geheimer API-Key müssen nichtleer gesetzt sein. |
 | `LLM_BASE_URL` / `LLM_TIMEOUT_SECONDS` | Defaults `https://api.openai.com/v1` und `30`; konfigurierbarer Endpunkt und numerischer Timeout. |
 | `TELEGRAM_BOT_TOKEN` | Für `knowledge-telegram` verpflichtender geheimer Token, getrennt vom Journaling-Bot. |
+| `PROPOSAL_INGRESS_*` | Eigener Submit-Token, Maschinenkennung, vollständige feste Owner-Delegation und Listen-Adresse gemäß [Eingangsvertrag](proposal-ingress.md#konfiguration-und-lokale-vertrauensgrenze). |
 | `REVIEW_*` | Authentifizierung, Owner, Sitzung und erlaubte Hosts gemäß [Browser-Konfiguration](v321-browser-review.md#authentication-and-sessions); es gibt kein Standardpasswort. |
 
 Die Konfiguration prüft unter anderem MCP-Transport/Port/Allowlist, nichtleere
@@ -139,3 +140,10 @@ retrievtes Wissen an den konfigurierten LLM-Endpunkt übertragen. Telegram empf�
 Nachrichten und Antworten. Dies sind externe Datenschutzgrenzen; lokale Embeddings
 machen diese Übertragungen nicht lokal. Historische Retry-/Idempotenzgrenzen stehen
 im [Telegram-Hotfixbericht](v311-telegram-hotfix.md).
+
+## Fertige Entwürfe einreichen
+
+`knowledge-proposal-ingress` startet den privaten v1-Eingang nach expliziter Client-/
+Owner-/Tokenkonfiguration. [HTTP-Vertrag, Limits und Idempotenz](proposal-ingress.md).
+Für lokale Versuche ausschließlich isolierte PostgreSQL-Daten, synthetische Aussagen
+und eigene Test-Credentials gemäß [CI-Reproduktion](CI.md#lokale-reproduktion) verwenden.

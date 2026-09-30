@@ -159,7 +159,10 @@ einzelnen Client nutzbar sein. Haley ist ein externes Integrationsziel.
 **Akzeptanz:** Ein weiterer Client kann die benötigten Fähigkeiten über definierte,
 authentifizierte Verträge nutzen, ohne kanonische Wissensdaten zu migrieren oder
 direkt auf Datenbank/Dateisystem schreiben zu müssen. Der Windows-Client selbst ist
-kein Knowledge-System-Feature. Die konkrete externe Integrations-API bleibt zu entwerfen.
+kein Knowledge-System-Feature. Der [Proposal-Eingang v1](docs/proposal-ingress.md)
+konkretisiert fertige Entwürfe
+mit eigenem Maschinen-Token und fester Review-Owner-Delegation; weitere externe
+Fähigkeiten benötigen jeweils einen eigenen Vertrag.
 
 ### KS-CLIENT-003
 
@@ -243,8 +246,9 @@ eine ausdrückliche spätere Produktentscheidung.
 ## Offene Entscheidungen
 
 Noch festzulegen sind der Name des privaten Daten-Repositories und dessen
-Migrations-/Backupbetrieb, die konkrete authentifizierte Integrations-API für Haley
-und andere Clients, das Export-/Löschverfahren samt Historienaufbewahrung sowie
+Migrations-/Backupbetrieb, weitere authentifizierte Integrationsfähigkeiten für Haley
+und andere Clients über den [Proposal-Eingang v1](docs/proposal-ingress.md) hinaus,
+das Export-/Löschverfahren samt Historienaufbewahrung sowie
 Produktlizenz und kommerzielle Freigabekriterien. Diese Fragen ändern die oben
 beschlossenen Leitplanken nicht. Operative Bearbeitung und Priorisierung erfolgen
 ausschließlich über Issues; die [Roadmap](ROADMAP.md) ordnet die Entwicklungsrichtungen ein.

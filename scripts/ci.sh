@@ -98,6 +98,8 @@ PY
     "${compose[@]}" run --rm --no-deps -T smoke 2>&1 | tee "$reports/smoke.log"
     "${compose[@]}" run --rm --no-deps -T smoke \
       python /app/scripts/mcp_http_image_smoke.py 2>&1 | tee -a "$reports/smoke.log"
+    "${compose[@]}" run --rm --no-deps -T smoke \
+      python /app/scripts/proposal_ingress_image_smoke.py 2>&1 | tee -a "$reports/smoke.log"
     ;;
   logs)
     "${compose[@]}" ps --all > "$reports/services.log"

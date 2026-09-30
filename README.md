@@ -56,6 +56,7 @@ CLI / lesende MCP-Clients -> KnowledgeService -> SourceAdapter / Retrieval
 Telegram -> ConversationRouter -> ConversationService -> ProposalService
                                  |-> KnowledgeService
                                  |-> austauschbare LLM-Protokolle
+Maschinen-Client -> ProposalIngressService -> pending-Proposal / Owner-Queue
 Browser-Review -> ProposalReviewService -> ProposalApplyService
                                           |-> kanonisches Markdown
                                           |-> dokumentbezogener Suchindex
@@ -82,6 +83,11 @@ Bis zu einer gesonderten Migration bleibt vorhandenes `knowledge/` kanonisch.
 Der aktuelle MCP-HTTP-Zugang verlangt eine serverseitig geprüfte
 Maschinenberechtigung und erlaubt zunächst nur kanonisches Markdown.
 [Vertrag, Konfiguration und lokale Grenze](docs/mcp-http-access.md).
+
+Der separate [Proposal-Eingang](docs/proposal-ingress.md) nimmt fertige Entwürfe
+über authentifizierten `POST /v1/proposals` atomar und idempotent in die Owner-Queue
+auf. Sein Token ist vom lesenden MCP und Browser-Login getrennt; Review und Apply
+bleiben ausdrückliche Browseroperationen.
 
 - [Lokale Einrichtung, Start, MCP und Retrieval-Evaluation](docs/local-development.md)
   mit Python ab 3.11, pip und PostgreSQL/pgvector.

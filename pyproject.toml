@@ -32,6 +32,7 @@ knowledge = "knowledge_system.cli:main"
 knowledge-mcp = "knowledge_system.mcp_server:main"
 knowledge-telegram = "knowledge_system.telegram_bot:main"
 knowledge-review = "knowledge_system.review_web:main"
+knowledge-proposal-ingress = "knowledge_system.proposal_ingress_web:main"
 
 [tool.setuptools.package-data]
 knowledge_system = ["templates/*.html", "static/*.css", "static/*.js"]

@@ -264,6 +264,10 @@ class PostgresProposalStore:
         print(f"[proposal] Suggestion {suggestion_id} status={rejected.status.value}")
         return rejected
 
+    def insert_proposal_in_transaction(self, conn: Any, proposal: ProposalCreate) -> Sequence[Any]:
+        """Insert using the caller's transaction; the caller owns commit and idempotency."""
+        return self._insert_proposal(conn, proposal)
+
     def _insert_proposal(self, conn: Any, proposal: ProposalCreate) -> Sequence[Any]:
         draft = proposal.draft
         if proposal.source_suggestion_id is None:
