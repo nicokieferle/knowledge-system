@@ -67,13 +67,13 @@ async def _exercise(port: int, token: str) -> None:
         )
         assert result.is_error is False
         assert result.structured_content["results"][0]["source_id"] == "knowledge-git"
-        assert result.structured_content["results"][0]["source_path"] == "note.md"
+        assert result.structured_content["results"][0]["source_path"] == "überblick.md"
         document = await client.call_tool(
-            "get_document", {"source_id": "knowledge-git", "source_path": "note.md"}
+            "get_document", {"source_id": "knowledge-git", "source_path": "überblick.md"}
         )
         assert document.structured_content == {
             "source_id": "knowledge-git",
-            "source_path": "note.md",
+            "source_path": "überblick.md",
             "content": "# Synthetic\n\nOriginal synthetic document.",
         }
         unavailable = await client.call_tool("apply_accepted_revision", {})
@@ -98,13 +98,13 @@ def main() -> None:
             )
             conn.execute(
                 "INSERT INTO chunks VALUES "
-                "('synthetic', 'knowledge-git', 'note.md', 'Synthetic', "
+                "('synthetic', 'knowledge-git', 'überblick.md', 'Synthetic', "
                 "'Synthetic indexed passage.', 1)"
             )
 
         with tempfile.TemporaryDirectory(prefix="mcp-http-smoke-") as directory:
             root = Path(directory)
-            (root / "note.md").write_text(
+            (root / "überblick.md").write_text(
                 "# Synthetic\n\nOriginal synthetic document.", encoding="utf-8"
             )
             token = secrets.token_hex(32)
@@ -140,7 +140,10 @@ def main() -> None:
     finally:
         with psycopg.connect(address, autocommit=True) as conn:
             conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
-    print("mcp_http_image_smoke=passed; valid_and_invalid_auth=true; synthetic_data=true")
+    print(
+        "mcp_http_image_smoke=passed; valid_and_invalid_auth=true; "
+        "unicode_path=true; synthetic_data=true"
+    )
 
 
 if __name__ == "__main__":

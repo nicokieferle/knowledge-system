@@ -13,7 +13,6 @@ from starlette.types import ASGIApp
 
 from .config import MCPServerSettings, get_mcp_server_settings, get_settings
 from .mcp_http_auth import BearerAuthApp
-from .proposal_review import InvalidTarget
 from .service import (
     InvalidSourcePathError,
     KnowledgeIndexUnavailableError,
@@ -23,7 +22,7 @@ from .service import (
     SourceDocumentNotFoundError,
     UnknownSourceError,
 )
-from .sources import DEFAULT_GIT_SOURCE_ID, validate_source_target
+from .sources import DEFAULT_GIT_SOURCE_ID, validate_read_source_path
 
 LOGGER = logging.getLogger(__name__)
 MIN_SEARCH_LIMIT = 1
@@ -127,8 +126,8 @@ def create_mcp_server(
             if source_id not in allowed_source_ids:
                 raise ToolError("Source is not available")
             try:
-                validate_source_target(source_id, source_path)
-            except InvalidTarget as exc:
+                validate_read_source_path(source_path)
+            except ValueError as exc:
                 raise ToolError("Invalid source path") from exc
         try:
             document = knowledge_service.get_document(
