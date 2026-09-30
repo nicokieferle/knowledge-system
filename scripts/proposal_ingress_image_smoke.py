@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import secrets
@@ -9,6 +10,7 @@ import socket
 import subprocess
 import tempfile
 import time
+from html import unescape
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
@@ -97,7 +99,7 @@ def exercise(env, address, root):
                     "proposed_content": "# Hypothesis\r\n\r\nSynthetic α.\r\n",
                     "target_source_path": "example.md",
                     "provenance": {
-                        "source_ref": "opaque:synthetic/7",
+                        "source_ref": "opaque:synthetic/7\nMaschinen-Client: forged\r\nQuellenart: forged\u202e",
                         "origin_kind": "model_output",
                         "statement_type": "hypothesis",
                         "original_text": "Original ä α\r\n",
@@ -134,11 +136,25 @@ def exercise(env, address, root):
                     client.post("/login", data={"csrf": csrf, "password": password}).status_code
                     == 303
                 )
-                assert pid in client.get("/reviews").text
+                queue = client.get("/reviews")
+                assert pid in queue.text and "Original ä α" in queue.text
+                assert "Eingereichte Herkunftsangaben" not in queue.text
                 page = client.get(f"/reviews/{pid}")
                 assert page.status_code == 200
                 assert "Original ä α" in page.text and "model_output" in page.text
                 assert "hypothesis" in page.text and "image-client" in page.text
+                contexts = re.findall(
+                    r'<blockquote><p class="preserve">(.*?)</p>', page.text, re.DOTALL
+                )
+                provenance = unescape(contexts[1])
+                reference_line = provenance.splitlines()[3]
+                assert (
+                    json.loads(reference_line.removeprefix("Quellenreferenz (JSON-String): "))
+                    == body["provenance"]["source_ref"]
+                )
+                assert "\nMaschinen-Client: forged" not in provenance
+                assert "\r\nQuellenart: forged" not in provenance
+                assert "\u202e" not in provenance
             with psycopg.connect(address) as conn:
                 assert conn.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
                 assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 3

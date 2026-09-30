@@ -180,10 +180,15 @@ class ProposalIngressService:
                     (*owner_key, conversation_id),
                 )
                 p = submission.provenance
+                # Reversible JSON escaping keeps field lines and display direction fixed.
+                source_ref_json = json.dumps(p.source_ref, ensure_ascii=True).replace(
+                    "\x7f", r"\u007f"
+                )
                 provenance = (
                     "Eingereichte Herkunftsangaben (ungeprüfte Clientangaben):\n"
                     f"Maschinen-Client: {client_id}\nQuellenart: {p.origin_kind}\n"
-                    f"Quellenreferenz: {p.source_ref}\nAussagetyp: {p.statement_type}\n"
+                    f"Quellenreferenz (JSON-String): {source_ref_json}\n"
+                    f"Aussagetyp: {p.statement_type}\n"
                     "Die separate Originalnachricht ist eingereichter Kontext; die Rolle user "
                     "bestätigt keine menschliche Autorschaft. model_output bezeichnet Modelltext."
                 )

@@ -125,14 +125,18 @@ class PostgresReviewStore:
                 "FROM proposals p WHERE " + owned,
                 (list(statuses), *key),
             ).fetchone()
+            # Ingress stores original then provenance; other clients retain the latest excerpt.
             rows = conn.execute(
                 """SELECT p.id, p.status, p.created_at,
                 COALESCE(r.target_source_path,p.target_source_path),
                 (SELECT left(m.content,240) FROM messages m
                  WHERE m.conversation_id=p.conversation_id
                  AND m.id=ANY(p.originating_message_ids) AND m.role='user'
-                 AND NOT (m.metadata ? 'control') ORDER BY m.id DESC LIMIT 1), r.revision
-                FROM proposals p LEFT JOIN LATERAL
+                 AND NOT (m.metadata ? 'control')
+                 ORDER BY CASE WHEN c.client_type='proposal-ingress' THEN m.id END ASC,
+                          m.id DESC LIMIT 1), r.revision
+                FROM proposals p JOIN conversations c ON c.id=p.conversation_id
+                LEFT JOIN LATERAL
                 (SELECT revision,target_source_path FROM proposal_reviews
                  WHERE proposal_id=p.id ORDER BY revision DESC LIMIT 1) r ON true
                 WHERE """

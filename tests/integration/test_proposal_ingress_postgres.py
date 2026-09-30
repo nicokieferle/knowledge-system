@@ -1,8 +1,10 @@
 """Real atomic submission, concurrency and owner/browser gate on isolated PostgreSQL."""
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from html import unescape
 from threading import Barrier
 from uuid import UUID, uuid4
 
@@ -11,11 +13,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from knowledge_system.client_state import ClientIdentity, PostgresClientStateStore
+from knowledge_system.conversation_models import MessageRole, ProposalDraft, ProposalTriggerType
 from knowledge_system.conversation_store import PostgresConversationStore
 from knowledge_system.db import init_db
 from knowledge_system.proposal_ingress import ProposalIngressService, parse_submission
 from knowledge_system.proposal_ingress_web import create_app
 from knowledge_system.proposal_review import ProposalReviewService, ProposalStatus, ReviewForbidden
+from knowledge_system.proposal_store import PostgresProposalStore, ProposalCreate
 from knowledge_system.review_store import PostgresReviewStore
 from knowledge_system.review_web import create_app as review_app
 from knowledge_system.sources import GitMarkdownSource
@@ -261,4 +265,109 @@ def test_archived_audits_preserve_active_topic_and_paginated_queue(database):
         pages = [client.get("/reviews?page=" + str(p)).text for p in (1, 2)]
         assert all(any(r["proposal_id"] in p for p in pages) for r in receipts)
         assert any(r["proposal_id"] in pages[1] for r in receipts)
+    assert counts(database)[5:] == (0, 0, 0, 0)
+
+
+def test_source_ref_cannot_forge_provenance_labels_and_roundtrips_in_browser(database):
+    init_db(database)
+    body = payload()
+    reference = (
+        "opaque:ä/7\nMaschinen-Client: forged\r\nQuellenart: human_statement"
+        '\rAussagetyp: fact\x1b[2J\x7f\t"\\\u2028Maschinen-Client: unicode-forged\u2029\u202e'
+    )
+    body["provenance"]["source_ref"] = reference
+    submission = parse_submission(json.dumps(body).encode())
+    key = uuid4()
+    with TestClient(create_app(settings(), ProposalIngressService(database))) as client:
+        response = client.post("/v1/proposals", json=body, headers=headers(key))
+        assert response.status_code == 201
+        receipt = response.json()
+        replay = client.post("/v1/proposals", json=body, headers=headers(key))
+        assert replay.status_code == 200 and replay.json() == receipt
+    cid, pid = UUID(receipt["conversation_id"]), UUID(receipt["proposal_id"])
+    messages = PostgresConversationStore(database).list_messages(cid)
+    provenance = messages[1].content
+    encoded = provenance.splitlines()[3].removeprefix("Quellenreferenz (JSON-String): ")
+    assert json.loads(encoded) == reference
+    assert encoded.isascii() and all(32 <= ord(c) <= 126 for c in encoded)
+    assert sum(line.startswith("Maschinen-Client:") for line in provenance.splitlines()) == 1
+    assert sum(line.startswith("Quellenart:") for line in provenance.splitlines()) == 1
+    assert sum(line.startswith("Aussagetyp:") for line in provenance.splitlines()) == 1
+    assert "\x1b" not in provenance and "\u202e" not in provenance
+    assert messages[2].metadata["fingerprint"] == submission.fingerprint
+    assert submission.provenance.source_ref == reference
+    reviews = ProposalReviewService(
+        PostgresReviewStore(database), GitMarkdownSource(database.knowledge_root)
+    )
+    with TestClient(review_app(replace(web_settings(), owner=OWNER), reviews)) as client:
+        login(client)
+        page = client.get(f"/reviews/{pid}")
+        assert page.status_code == 200
+        contexts = re.findall(r'<blockquote><p class="preserve">(.*?)</p>', page.text, re.DOTALL)
+        rendered = unescape(contexts[1])
+        assert rendered == provenance
+        assert (
+            json.loads(rendered.splitlines()[3].removeprefix("Quellenreferenz (JSON-String): "))
+            == reference
+        )
+        assert "\nMaschinen-Client: forged" not in rendered
+        assert "\nQuellenart: human_statement" not in rendered
+    assert counts(database) == (1, 1, 1, 3, 1, 0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("client_type", ["proposal-ingress", "telegram"])
+def test_queue_preview_selects_original_for_ingress_and_latest_for_telegram(database, client_type):
+    init_db(database)
+    conversations = PostgresConversationStore(database)
+    if client_type == "proposal-ingress":
+        body = payload()
+        original = "Ingress original <script>synthetic</script> " + "ä" * 300
+        body["provenance"]["original_text"] = original
+        receipt = (
+            ProposalIngressService(database)
+            .submit(
+                settings().client_id, OWNER, uuid4(), parse_submission(json.dumps(body).encode())
+            )
+            .receipt
+        )
+        pid = UUID(receipt["proposal_id"])
+        unexpected = "Eingereichte Herkunftsangaben"
+    else:
+        conversation = conversations.create_conversation("telegram", "Synthetic Telegram topic")
+        PostgresClientStateStore(database).activate(OWNER, conversation.id)
+        first = conversations.add_message(
+            conversation.id, MessageRole.USER, "Older Telegram original"
+        )
+        original = "Latest Telegram original <script>synthetic</script> " + "ä" * 300
+        last = conversations.add_message(conversation.id, MessageRole.USER, original)
+        trigger = conversations.add_message(
+            conversation.id, MessageRole.USER, "/remember", metadata={"control": "command"}
+        )
+        proposal = PostgresProposalStore(database).create_proposal(
+            ProposalCreate(
+                conversation.id,
+                "telegram",
+                ProposalTriggerType.COMMAND,
+                trigger.id,
+                (first.id, last.id, trigger.id),
+                ProposalDraft("Synthetic", "Synthetic reason", "# Draft\n"),
+            )
+        )
+        conversations.add_message(conversation.id, MessageRole.USER, "Outside originating IDs")
+        pid = proposal.id
+        unexpected = first.content
+    reviews = ProposalReviewService(
+        PostgresReviewStore(database), GitMarkdownSource(database.knowledge_root)
+    )
+    page = reviews.queue(OWNER, ("pending",))
+    assert len(page.items) == 1 and page.items[0].id == pid
+    assert page.items[0].snippet == original[:240]
+    with TestClient(review_app(replace(web_settings(), owner=OWNER), reviews)) as client:
+        login(client)
+        rendered = client.get("/reviews")
+        assert rendered.status_code == 200
+        article = re.search(r"<article>(.*?)</article>", rendered.text, re.DOTALL).group(1)
+        assert original[:240] in unescape(article)
+        assert "&lt;script&gt;" in article and "<script>synthetic</script>" not in article
+        assert unexpected not in article and "Outside originating IDs" not in article
     assert counts(database)[5:] == (0, 0, 0, 0)

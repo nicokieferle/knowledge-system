@@ -93,7 +93,12 @@ Altbytes und Berechtigungsangaben sind keine Eingabefelder.
 `decision`, `proposal`, `open_question`. Beides sind ungeprüfte Clientangaben.
 Zusammengesetzte Aussagen kennzeichnet der Client zusätzlich im Markdown.
 `source_ref` ist eine opake Herkunftsreferenz; der Dienst ruft keine URLs ab und
-benutzt sie nicht für Lookups oder Autorisierung. Ein optionaler Zielpfad schlägt
+benutzt sie nicht für Lookups oder Autorisierung. Im Herkunftstext steht die Referenz
+als ASCII-JSON-String in genau einer Feldzeile (`ensure_ascii=True`, zusätzlich
+DEL als `\u007f` maskiert): Zeilenumbrüche, Steuerzeichen und Unicode sind sichtbar maskiert. JSON-
+Dekodierung stellt den exakten eingereichten Wert wieder her; weder Validierung noch
+Fingerprint normalisieren ihn. So können Referenzwerte keine festen Herkunftslabels
+oder deren Leserichtung fälschen. Ein optionaler Zielpfad schlägt
 nur ein Ziel in `knowledge-git` vor; Unicode-Lesepfade erweitern die Schreibgrenze nicht.
 Ohne Ziel legt der Mensch dieses im Browser fest, der auch die aktuelle Basis ermittelt.
 
@@ -145,6 +150,9 @@ oder Migration; bestehende Archiv-/Restore-Verfahren erfassen die Metadaten und 
 ## Browser und Fehler
 
 Die ownershipgefilterte paginierte Queue erreicht auch archivierte Auditcontainer.
+Für Container vom reservierten Typ `proposal-ingress` zeigt sie die erste
+Ursprungsnachricht (Originalaussage, maximal 240 Zeichen) als Vorschau. Telegram und
+andere bisherige Clients behalten die letzte zulässige Ursprungsnachricht als Vorschau.
 Das Detail rendert Original und Herkunft mit HTML-Escaping. Queue-/Detail-GET und
 Submit/Replay bereiten kein Review vor. Erst der gesondert angemeldete Browser-POST
 mit CSRF erzeugt eine Revision; Entscheidung und Accept & Apply bleiben
