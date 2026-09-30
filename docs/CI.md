@@ -61,6 +61,11 @@ nicht gerade das Zusammenspiel ersetzen, das der Nachweis behauptet.
   und `GitMarkdownSource` werden mit gültigem, fehlendem und falschem Bearer-Token
   geprüft. Nur Indexzeilen/Originaldatei sind synthetisch; es gibt keinen Modellaufruf,
   Remote-Client, TLS-Terminator oder produktiven Serverzugriff.
+- `scripts/proposal_ingress_image_smoke.py` startet im selben Image den echten
+  Eingang und Browser mit Uvicorn gegen eine eigene isolierte PostgreSQL-Schema-
+  Namespace. POST, Replay, Konflikt, Token-Grenze, Browserlogin und sichtbare
+  Provenienz werden über Loopback-HTTP geprüft. Daten/Credentials sind synthetisch;
+  kein Apply, Modell, Remote-Client, TLS oder produktiver Serverzugriff.
 - Reale Client-/Provider-, Modell- oder Zielhost-Smokes benötigen einen passenden
   gesonderten Auftrag und isolierte Ressourcen. Fehlende Live-Nachweise ausdrücklich
   nennen; bestandene Teiltests belegen keine umfassende Live-Funktionsfähigkeit.

@@ -5,7 +5,7 @@ import os
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -330,6 +330,13 @@ def test_real_archive_restore_preserves_accepted_revision(database):
     deferred_service.decide(
         deferred_who, deferred_proposal.id, deferred_revision.id, ProposalStatus.DEFERRED
     )
+    from knowledge_system.proposal_ingress import ProposalIngressService
+    from tests.integration.test_proposal_ingress_postgres import draft
+
+    submission_key = uuid4()
+    submission = ProposalIngressService(database).submit(
+        "archive-client", who, submission_key, draft()
+    )
     before = read_durable_state_fingerprint(database)
     assert set(before.counts) == set(DURABLE_TABLES)
     assert all(before.counts[table] > 0 for table in DURABLE_TABLES)
@@ -406,6 +413,17 @@ def test_real_archive_restore_preserves_accepted_revision(database):
         assert restore.returncode == 0, restore.stderr.decode()
         restored = replace(database, database_url=restored_url)
         assert read_durable_state_fingerprint(restored) == before
+        replay = ProposalIngressService(restored).submit(
+            "archive-client", who, submission_key, draft()
+        )
+        assert not replay.created and replay.receipt == submission.receipt
+        submitted_proposal = (
+            PostgresReviewStore(restored).get(who, UUID(submission.receipt["proposal_id"])).proposal
+        )
+        assert submitted_proposal.proposed_content == draft().proposed_content
+        context = PostgresReviewStore(restored).context(who, submitted_proposal.id)
+        assert context[0].content == draft().provenance.original_text
+        assert "model_output" in context[1].content
         assert PostgresReviewStore(restored).get(who, p.id).accepted_review_id == accepted.id
         assert (
             PostgresReviewStore(restored).get(deferred_who, deferred_proposal.id).proposal.status
