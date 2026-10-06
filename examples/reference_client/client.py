@@ -363,7 +363,8 @@ def main(argv=None):
         print("Fehler: Zeitlimit erreicht; lokalen Dienst prüfen.", file=sys.stderr)
     except Exception as error:  # noqa: BLE001 - never expose SDK/transport exception details
         message = (
-            public_failure(error) or "Verbindung oder Antwort ungültig; Endpunkt und Token prüfen."
+            public_failure(error)
+            or "Verbindung, Authentifizierung oder Antwort ungültig; Endpunkt und Token prüfen."
         )
         print(f"Fehler: {message}", file=sys.stderr)
     if args.command == "submit":
