@@ -92,7 +92,9 @@ def protect_output(text, token):
     secrets = (token, os.environ.get(READ_TOKEN), os.environ.get(SUBMIT_TOKEN))
     if any(secret and secret in text for secret in secrets):
         raise ClientError("Ausgabe gesperrt: Antwort enthält einen Zugangstoken.")
-    if any(ord(c) < 32 and c not in "\r\n\t" or 127 <= ord(c) < 160 for c in text):
+    # Allow CR only as part of CRLF; inspect without changing the returned bytes.
+    checked = text.replace("\r\n", "\n")
+    if any(ord(c) < 32 and c not in "\n\t" or 127 <= ord(c) < 160 for c in checked):
         raise ClientError("Ausgabe gesperrt: Antwort enthält Terminal-Steuerzeichen.")
     return text
 

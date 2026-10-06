@@ -293,6 +293,39 @@ def test_empty_results_and_tool_error(tmp_path):
         assert result.returncode == 1 and b"MCP-Anfrage fehlgeschlagen" in result.stderr
 
 
+@pytest.mark.parametrize("command", ["search", "get"])
+@pytest.mark.parametrize(
+    "content,allowed",
+    [
+        ("# Original\rÜberschrieben", False),
+        ("# Original\r", False),
+        ("# Original\r\r\n", False),
+        ("# Original\r\n\r\nUnverändert α.\r\n", True),
+    ],
+)
+def test_mcp_output_rejects_lone_cr_and_preserves_crlf(tmp_path, command, content, allowed):
+    service = FakeKnowledgeService()
+    hit = replace(service.search("synthetic", "fast", 5)[0], content=content)
+    service.search = Mock(return_value=[hit])
+    service.get_document = Mock(
+        return_value=Mock(source_id=hit.source_id, source_path=hit.source_path, content=content)
+    )
+    arguments = ("synthetic",) if command == "search" else (hit.source_id, hit.source_path)
+    with _running_http_server(create_mcp_server(service), token=MCP_TOKEN) as url:
+        result = run_cli(tmp_path, command, *arguments, "--mcp-url", url + "/mcp")
+    if allowed:
+        assert result.returncode == 0, result.stderr
+        if command == "get":
+            assert result.stdout == content.encode("utf-8")
+        else:
+            assert json.loads(result.stdout)["results"][0]["content"] == content
+    else:
+        assert result.returncode == 1
+        assert result.stdout == b""
+        assert b"Terminal-Steuerzeichen" in result.stderr
+        assert b"\r" not in result.stderr
+
+
 def test_hidden_prompt_never_falls_back_to_echo(monkeypatch):
     monkeypatch.delenv(client.READ_TOKEN, raising=False)
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
