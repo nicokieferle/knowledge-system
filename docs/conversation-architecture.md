@@ -13,7 +13,7 @@ stehen in [REQUIREMENTS.md](../REQUIREMENTS.md), Phasen und historische Nachweis
 | Lesende Clients | [cli.py](../src/knowledge_system/cli.py), [mcp_server.py](../src/knowledge_system/mcp_server.py) | CLI ruft den Service direkt auf; MCP bietet nur `search_knowledge` und `get_document`; [MCP-Tests](../tests/test_mcp_server.py) |
 | Gespräch und Vorschläge | [conversation_service.py](../src/knowledge_system/conversation_service.py), [conversation_memory.py](../src/knowledge_system/conversation_memory.py), [proposal_service.py](../src/knowledge_system/proposal_service.py) | Nachrichten, Zusammenfassungen, Intent und Proposals; [Gesprächstests](../tests/test_conversation_service.py), [Memory-Tests](../tests/test_conversation_memory.py) |
 | Routing und Integrationen | [conversation_router.py](../src/knowledge_system/conversation_router.py), [telegram_adapter.py](../src/knowledge_system/telegram_adapter.py), [llm_provider.py](../src/knowledge_system/llm_provider.py) | Client-/Provideradapter an Domänengrenzen; [Routingtests](../tests/test_conversation_router.py), [Providertests](../tests/test_llm_provider.py) |
-| Externe fertige Entwürfe | [proposal_ingress.py](../src/knowledge_system/proposal_ingress.py), [proposal_ingress_web.py](../src/knowledge_system/proposal_ingress_web.py) | Eigener Maschinen-Token, feste Owner-Delegation, atomarer archivierter Auditcontainer und idempotentes Proposal; [Vertrag](proposal-ingress.md) |
+| Externe fertige Entwürfe und Status | [proposal_ingress.py](../src/knowledge_system/proposal_ingress.py), [proposal_ingress_web.py](../src/knowledge_system/proposal_ingress_web.py) | Eigener Maschinen-Token, feste Owner-Delegation, atomarer archivierter Auditcontainer, idempotentes Proposal und ausschließlich eigene Statusmetadaten; [Vertrag](proposal-ingress.md) |
 | Review und Identität | [proposal_review.py](../src/knowledge_system/proposal_review.py), [review_store.py](../src/knowledge_system/review_store.py), [review_auth.py](../src/knowledge_system/review_auth.py), [review_web.py](../src/knowledge_system/review_web.py) | Unveränderliche Revisionen, Auth, Ownership, CSRF; [Browser-Design](v321-browser-review.md), [Webtests](../tests/test_review_web.py) |
 | Apply und Wiederholung | [proposal_apply.py](../src/knowledge_system/proposal_apply.py), [knowledge_apply.py](../src/knowledge_system/knowledge_apply.py), [index_coordination.py](../src/knowledge_system/index_coordination.py) | Revisionsgebundene Bytes und Journal; [V3.3-Vertrag](v33-design.md), [Integrationstests](../tests/integration/test_proposal_apply_postgres.py) |
 
@@ -184,3 +184,12 @@ für fertige Entwürfe bereit. Originaltext, Herkunft und Kontrolltrigger bleibe
 dauerhafte Gesprächs-/Proposal-Daten. Der archivierte Container ist Review-Kontext
 und kein aktives Router-Thema. Submit erstellt keine Review-Revision und verfügt
 über keinen Markdown- oder Indexschreibpfad.
+
+Die [lesende Statusoperation](proposal-ingress.md#status-eigener-einreichungen) nutzt
+dieselbe Maschinenberechtigung, erweitert aber weder Quellenrechte noch Browser-/
+Review-/Apply-Befugnisse. Sie prüft Originaltrigger/Receipt, gespeicherte Client-/
+Owner-Bindung und aktuelle Ownership im selben lesenden PostgreSQL-Snapshot wie
+Proposalstatus, akzeptierte Review-ID und getrennte Datei-/Indexzustände. Ohne
+Apply-Journal bleiben beide Zustände leer. Gemeinsamer Owner oder `source_client`
+genügen nicht; Konfliktnachfolger sind keine Einreichungen dieser Operation.
+Der GET konstruiert keinen Review-/Apply-Service und berührt keine Wissensdatei.

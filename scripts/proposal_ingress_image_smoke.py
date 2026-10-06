@@ -116,6 +116,24 @@ def exercise(env, address, root):
                 first = client.post("/v1/proposals", json=body, headers=headers)
                 assert first.status_code == 201
                 receipt = first.json()
+                status_path = f"/v1/proposals/{receipt['proposal_id']}/status"
+                expected_status = {
+                    "proposal_id": receipt["proposal_id"],
+                    "proposal_status": "pending",
+                    "accepted_review_id": None,
+                    "apply_status": None,
+                    "index_status": None,
+                }
+                assert client.get(status_path).status_code == 401
+                assert (
+                    client.get(status_path, headers={"Authorization": "Bearer wrong"}).status_code
+                    == 401
+                )
+                status = client.get(status_path, headers=headers)
+                assert status.status_code == 200 and status.json() == expected_status
+                assert status.headers["cache-control"] == "no-store"
+                missing = client.get(f"/v1/proposals/{uuid4()}/status", headers=headers)
+                assert missing.status_code == 404 and missing.json()["error"] == "not_found"
                 replay = client.post("/v1/proposals", json=body, headers=headers)
                 assert replay.status_code == 200 and replay.json() == receipt
                 conflict = client.post(
@@ -169,6 +187,52 @@ def exercise(env, address, root):
                     "chunks",
                 ):
                     assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
+            assert not list(root.iterdir())
+            # Real browser-only prepare/reject, then observe via the separate ingress process.
+            with httpx2.Client(base_url=f"http://127.0.0.1:{review_port}") as client:
+                page = client.get("/login")
+                csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+                assert (
+                    client.post("/login", data={"csrf": csrf, "password": password}).status_code
+                    == 303
+                )
+                page = client.get(f"/reviews/{pid}")
+                csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+                assert (
+                    client.post(f"/reviews/{pid}/refresh", data={"csrf": csrf}).status_code == 303
+                )
+                page = client.get(f"/reviews/{pid}")
+                csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+                rid = re.search(r'name="review_id" value="([^"]+)"', page.text).group(1)
+                assert (
+                    client.post(
+                        f"/reviews/{pid}/decision/reject",
+                        data={
+                            "csrf": csrf,
+                            "review_id": rid,
+                            "status": "pending",
+                            "confirmed": "yes",
+                        },
+                    ).status_code
+                    == 303
+                )
+            stop(ingress)
+            rotated = secrets.token_hex(32)
+            env["PROPOSAL_INGRESS_BEARER_TOKEN"] = rotated
+            ingress = start("knowledge-proposal-ingress", env, port)
+            with httpx2.Client(base_url=f"http://127.0.0.1:{port}") as client:
+                assert client.get(status_path, headers=headers).status_code == 401
+                new_headers = headers | {"Authorization": "Bearer " + rotated}
+                status = client.get(status_path, headers=new_headers)
+                assert status.status_code == 200
+                assert status.json() == expected_status | {"proposal_status": "rejected"}
+                replay = client.post("/v1/proposals", json=body, headers=new_headers)
+                assert replay.status_code == 200 and replay.json() == receipt
+            with psycopg.connect(address) as conn:
+                assert conn.execute("SELECT count(*) FROM proposal_reviews").fetchone()[0] == 1
+                assert conn.execute("SELECT count(*) FROM proposal_decisions").fetchone()[0] == 1
+                assert conn.execute("SELECT count(*) FROM proposal_applies").fetchone()[0] == 0
+                assert conn.execute("SELECT count(*) FROM chunks").fetchone()[0] == 0
             assert not list(root.iterdir())
         finally:
             stop(browser)

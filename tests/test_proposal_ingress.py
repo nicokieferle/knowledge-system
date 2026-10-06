@@ -63,6 +63,40 @@ def test_http_valid_draft_and_receipt():
         assert client.post("/v1/proposals", json=payload(), headers=headers()).status_code == 200
 
 
+def test_http_status_boundary_and_safe_failures():
+    service = Mock()
+    pid = uuid4()
+    result = {
+        "proposal_id": str(pid),
+        "proposal_status": "pending",
+        "accepted_review_id": None,
+        "apply_status": None,
+        "index_status": None,
+    }
+    service.status.return_value = result
+    path = f"/v1/proposals/{pid}/status"
+    with TestClient(create_app(settings(), service)) as client:
+        r = client.get(path, headers=headers())
+        assert r.status_code == 200 and r.json() == result
+        assert r.headers["cache-control"] == "no-store"
+        service.status.assert_called_once_with(settings().client_id, OWNER, pid)
+        service.status.reset_mock()
+        for invalid in ("invalid", "{" + str(pid) + "}", str(pid).upper()):
+            r = client.get(f"/v1/proposals/{invalid}/status", headers=headers())
+            assert r.status_code == 404 and r.json()["error"] == "not_found"
+        assert client.get(path + "?owner=other", headers=headers()).status_code == 400
+        assert client.get(path, headers=headers() | {"Host": "foreign"}).status_code == 400
+        assert client.post(path, headers=headers()).status_code == 405
+        service.status.assert_not_called()
+        service.status.side_effect = IngressError(404, "not_found")
+        assert client.get(path, headers=headers()).json()["error"] == "not_found"
+        service.status.side_effect = psycopg.OperationalError("private SQL credential")
+        r = client.get(path, headers=headers())
+        assert r.status_code == 503 and r.json()["error"] == "status_unavailable"
+        assert "private" not in r.text
+        service.submit.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "credential",
     [
@@ -78,9 +112,13 @@ def test_auth_precedes_body_and_no_store_access(credential):
     service = Mock()
     with TestClient(create_app(settings(), service)) as client:
         response = client.post("/v1/proposals", content=b"{bad", headers=credential)
+        denied_status = client.get(f"/v1/proposals/{uuid4()}/status", headers=credential)
     assert response.status_code == 401 and response.headers["www-authenticate"] == "Bearer"
+    assert denied_status.status_code == 401
+    assert denied_status.headers["www-authenticate"] == "Bearer"
     assert set(response.json()) == {"error", "correlation_id"}
     service.submit.assert_not_called()
+    service.status.assert_not_called()
 
 
 def test_auth_does_not_receive_body():

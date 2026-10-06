@@ -161,8 +161,10 @@ authentifizierte Verträge nutzen, ohne kanonische Wissensdaten zu migrieren ode
 direkt auf Datenbank/Dateisystem schreiben zu müssen. Der Windows-Client selbst ist
 kein Knowledge-System-Feature. Der [Proposal-Eingang v1](docs/proposal-ingress.md)
 konkretisiert fertige Entwürfe
-mit eigenem Maschinen-Token und fester Review-Owner-Delegation; weitere externe
-Fähigkeiten benötigen jeweils einen eigenen Vertrag.
+mit eigenem Maschinen-Token und fester Review-Owner-Delegation. Seine lesende
+Statusoperation meldet ausschließlich minimale Zustände eigener Einreichungen bei
+exakt gespeicherter Maschinen-/Owner-Bindung; Review und Apply bleiben getrennt.
+Weitere externe Fähigkeiten benötigen jeweils einen eigenen Vertrag.
 
 ### KS-CLIENT-003
 
