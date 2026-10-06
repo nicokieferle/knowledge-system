@@ -11,10 +11,10 @@ Menschenlesbares Markdown mit Git-Historie ist die kanonische Wissensquelle.
 | --- | --- |
 | Dauerhafte Produktziele, Grenzen und Akzeptanzkriterien | [REQUIREMENTS.md](REQUIREMENTS.md) |
 | Phasen, Abhängigkeiten und historische Meilensteine | [ROADMAP.md](ROADMAP.md) |
-| Aktuelle Aufgaben, Prioritäten, Blocker und Restarbeiten | Ausschließlich [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues) |
+| Aktuelle Aufgaben, Prioritäten, Blocker und Restarbeiten | Ausschließlich [GitHub Issues](https://github.com/nicokieferle/knowledge-system/issues) |
 | Regeln und Lesewege für Coding Agents | [AGENTS.md](AGENTS.md) |
 | Architektur, Datenklassen und Review-/Apply-Verträge | [Architektur](docs/conversation-architecture.md) und [V3.3-Design](docs/v33-design.md) |
-| Änderungen und Prüfnachweise | Zugehörige [Pull Requests](https://github.com/Hengsto/Knowledge-System/pulls?q=is%3Apr) und [CI-Läufe](https://github.com/Hengsto/Knowledge-System/actions) |
+| Änderungen und Prüfnachweise | Zugehörige [Pull Requests](https://github.com/nicokieferle/knowledge-system/pulls?q=is%3Apr) und [CI-Läufe](https://github.com/nicokieferle/knowledge-system/actions) |
 
 ## Belegter Funktionsumfang
 
@@ -36,7 +36,7 @@ auf `main` (27. September 2026). Darin sind implementiert und gemergt:
   Entscheidung; V3.3 ergänzt **Accept & Apply**, Konflikterkennung und getrennte
   Wiederholung von Datei-Apply und dokumentbezogener Indexierung.
 
-Für diesen Ausgangscommit bestanden [CI / admission und CI / verify](https://github.com/Hengsto/Knowledge-System/actions/runs/36186972997).
+Für diesen Ausgangscommit bestanden [CI / admission und CI / verify](https://github.com/nicokieferle/knowledge-system/actions/runs/36186972997).
 Historische Bereichsprüfungen sind in der [Roadmap](ROADMAP.md#historische-meilensteine-v0-bis-v33)
 verlinkt. Diese Nachweise belegen keinen aktuellen Produktionsstand. Die
 Produktionsmigration für V3.2/V3.3 ist im letzten dokumentierten Stand offen;
