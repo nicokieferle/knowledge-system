@@ -162,6 +162,22 @@ def http_failure(status):
     return messages.get(status, "Unerwartete HTTP-Antwort; Dienst und lokalen Endpunkt prüfen.")
 
 
+def public_failure(error):
+    # Async transport cleanup can wrap even our own safe errors in exception groups.
+    if isinstance(error, ClientError):
+        return str(error)
+    if isinstance(error, httpx2.HTTPStatusError):
+        return http_failure(error.response.status_code)
+    if isinstance(error, TimeoutError):
+        return "Zeitlimit erreicht; lokalen Dienst prüfen."
+    if isinstance(error, BaseExceptionGroup):
+        for nested in error.exceptions:
+            message = public_failure(nested)
+            if message:
+                return message
+    return None
+
+
 async def mcp_read(url, token, tool, arguments):
     async with (
         httpx2.AsyncClient(
@@ -345,10 +361,11 @@ def main(argv=None):
         print("Abgebrochen.", file=sys.stderr)
     except TimeoutError:
         print("Fehler: Zeitlimit erreicht; lokalen Dienst prüfen.", file=sys.stderr)
-    except Exception:  # noqa: BLE001 - never expose SDK/transport exception details or secrets
-        print(
-            "Fehler: Verbindung oder Antwort ungültig; Endpunkt und Token prüfen.", file=sys.stderr
+    except Exception as error:  # noqa: BLE001 - never expose SDK/transport exception details
+        message = (
+            public_failure(error) or "Verbindung oder Antwort ungültig; Endpunkt und Token prüfen."
         )
+        print(f"Fehler: {message}", file=sys.stderr)
     if args.command == "submit":
         print(
             "Bei unbekanntem Ausgang: dieselben Dateien mit demselben Schlüssel wiederholen.",

@@ -140,12 +140,10 @@ def test_real_client_search_original_submit_replay_status(tmp_path):
             settings().client_id, settings().owner, client.UUID(PID)
         )
         # Neither credential grants the other boundary's authorization.
-        assert (
-            run_cli(
-                tmp_path, "search", "test", "--mcp-url", url + "/mcp", read=TOKEN, submit=None
-            ).returncode
-            == 1
+        denied = run_cli(
+            tmp_path, "search", "test", "--mcp-url", url + "/mcp", read=TOKEN, submit=None
         )
+        assert denied.returncode == 1 and b"Authentifizierung" in denied.stderr
         result = run_cli(
             tmp_path, "status", PID, "--ingress-url", ingress, read=None, submit=MCP_TOKEN
         )
@@ -292,7 +290,7 @@ def test_empty_results_and_tool_error(tmp_path):
         result = run_cli(tmp_path, "search", "missing", "--mcp-url", url + "/mcp")
         assert result.returncode == 0 and result.stdout == b"Keine Treffer.\n"
         result = run_cli(tmp_path, "search", " ", "--mcp-url", url + "/mcp")
-        assert result.returncode == 1 and b"Traceback" not in result.stderr
+        assert result.returncode == 1 and b"MCP-Anfrage fehlgeschlagen" in result.stderr
 
 
 def test_hidden_prompt_never_falls_back_to_echo(monkeypatch):
