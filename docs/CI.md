@@ -7,7 +7,7 @@ installiertem `dev`-Extra ausführen; Einrichtung: [lokale Entwicklung](local-de
 Prüfungen, Umgebung, Commit einschließlich uncommitteter Änderungen und Ergebnis
 im zugehörigen PR belegen. Historische Zahlen weiter unten gelten nur für den dort
 genannten Stand. Aktuelle Aufgaben und Blocker gehören ausschließlich in
-[GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues).
+[GitHub Issues](https://github.com/nicokieferle/knowledge-system/issues).
 
 | Änderung / Prüfung | Lokaler Befehl oder Auswahl | Erwartung und Grenze |
 | --- | --- | --- |
@@ -122,7 +122,7 @@ Ein Maintainer muss geprüfte Änderungen in einen vertrauenswürdigen internen 
 keinen Checkout aus. Ereignis-Sender, `actor` und `triggering_actor` müssen vorhanden
 und identisch sein. Für menschliche PRs müssen Kopf und Ziel im selben Repository
 liegen; die Autoren-Zuordnung muss OWNER, MEMBER oder COLLABORATOR sein.
-Seit [PR #13](https://github.com/Hengsto/Knowledge-System/pull/13) erlaubt der Workflow
+Seit [PR #13](https://github.com/nicokieferle/knowledge-system/pull/13) erlaubt der Workflow
 zusätzlich die App `hengsto-auto-coding-runner[bot]`, ausschließlich bei eigenen PRs
 aus demselben Repository mit Branchpräfix `codex/` und übereinstimmendem Bot-Sender.
 Andere Bots, Forks und Re-runs durch einen anderen Account werden abgewiesen.
@@ -309,7 +309,7 @@ für letzteren Befehl muss `CI_IMAGE` gesetzt sein.
 Die folgenden Einrichtungsschritte beschreiben die historische Erstabnahme von
 PR #9, als der Workflow noch nicht auf `main` lag. Sie sind kein aktueller
 Aufgabenstatus. Die spätere App-Ausnahme ist oben dokumentiert; die zeitweise
-Fehler-/Timeout-/Abbruchprüfung in [PR #10](https://github.com/Hengsto/Knowledge-System/pull/10)
+Fehler-/Timeout-/Abbruchprüfung in [PR #10](https://github.com/nicokieferle/knowledge-system/pull/10)
 wurde separat geführt und geschlossen. Ihr damaliger Umfang ersetzt keinen aktuellen
 Prüfnachweis für einen anderen Commit oder einen harten Runner-/Hostausfall.
 
@@ -347,7 +347,7 @@ Die Dienstlogs zeigen absichtlich den Zustand vor dem Cleanup.
 
 Zweiter Lauf: Nach vollständigem Erfolg einschließlich Post-Steps im selben GitHub-Lauf
 **Re-run all jobs** wählen, alternativ
-`gh run rerun <run_id> --repo Hengsto/Knowledge-System`. Keinen Commit und keine
+`gh run rerun <run_id> --repo nicokieferle/knowledge-system`. Keinen Commit und keine
 Abhängigkeits-/Workflow-Änderung dazwischen einführen. Run-ID und Commit bleiben gleich,
 Run-Attempt wird 2. pip muss bei erfolgreichem Save/Restore `cache-hit: true` melden;
 BuildKit sollte unveränderte Schichten als `CACHED` ausweisen. Basisimage-Updates oder

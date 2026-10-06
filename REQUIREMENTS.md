@@ -3,7 +3,7 @@
 Diese Datei beschreibt das beschlossene Zielbild und seine überprüfbaren Kriterien.
 Sie behauptet keine vollständige Implementierung oder produktive Einführung.
 Phasen und Abhängigkeiten stehen in [ROADMAP.md](ROADMAP.md), aktuelle Aufgaben,
-Prioritäten und Blocker ausschließlich in [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues).
+Prioritäten und Blocker ausschließlich in [GitHub Issues](https://github.com/nicokieferle/knowledge-system/issues).
 Technische Verträge erläutern die [Architektur](docs/conversation-architecture.md)
 und die dort verlinkten Designs. Die IDs bleiben bei redaktionellen Änderungen stabil.
 
@@ -96,7 +96,7 @@ Migrationen erhalten Herkunft, Beziehungen und Auditdaten; Index-Reset löscht s
 ### KS-DATA-006
 
 **Produkt und Laufzeitwissen trennen.** Anwendungscode und Produktdokumentation
-bleiben in `Hengsto/Knowledge-System`. Für versioniertes Laufzeitwissen ist ein
+bleiben in `nicokieferle/knowledge-system`. Für versioniertes Laufzeitwissen ist ein
 separates privates Daten-Repository vorzusehen.
 
 **Akzeptanz:** Wissen lässt sich unabhängig vom Produktcheckout verwalten, versionieren

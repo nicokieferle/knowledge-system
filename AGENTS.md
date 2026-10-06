@@ -1,7 +1,7 @@
 # Arbeitsregeln für Knowledge-System
 
 Basis: Repository Standard **1.5** · Übernommen: **27. September 2026**.
-Referenz: [Hengsto/repository-template, verbindliche Revision](https://github.com/Hengsto/repository-template/blob/09bcc83d2ecc132823e9484e5c075b9e0db970f2/REPOSITORY_STANDARD.md).
+Referenz: [nicokieferle/repository-template, verbindliche Revision](https://github.com/nicokieferle/repository-template/blob/09bcc83d2ecc132823e9484e5c075b9e0db970f2/REPOSITORY_STANDARD.md).
 Die folgenden Projektregeln gelten eigenständig; spätere Standardversionen werden
 bewusst übernommen.
 
@@ -10,7 +10,7 @@ bewusst übernommen.
 - [README.md](README.md): Einstieg und belegter Funktionsumfang.
   [REQUIREMENTS.md](REQUIREMENTS.md): dauerhafte Ziele und Akzeptanzkriterien.
   [ROADMAP.md](ROADMAP.md): Phasen und Abhängigkeiten.
-- Ausschließlich [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues)
+- Ausschließlich [GitHub Issues](https://github.com/nicokieferle/knowledge-system/issues)
   führen Aufgabenstatus, Prioritäten, Blocker, Restarbeiten und Verbesserungsvorschläge.
   PRs und Prüfläufe belegen Änderungen; keine zweite Statusliste in Markdown führen.
 - Bei jeder neuen Aufgabe/Sitzung geltende `AGENTS.md` lesen und Branch, `origin/main`,

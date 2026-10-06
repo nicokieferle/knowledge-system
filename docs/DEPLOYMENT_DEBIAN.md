@@ -7,7 +7,7 @@ Validierungen. Es ist keine Deploymentfreigabe und kein Nachweis des aktuellen
 Servers. Der letzte dokumentierte V3.2/V3.3-Stand lässt die Produktionsmigration
 offen; deren Planung steht in [ROADMAP.md](../ROADMAP.md#produktionsmigration-als-eigene-betriebsphase).
 Implementierungsverträge: [V3.3-Design](v33-design.md). Operative Aufgaben,
-Prioritäten und Blocker: ausschließlich [GitHub Issues](https://github.com/Hengsto/Knowledge-System/issues).
+Prioritäten und Blocker: ausschließlich [GitHub Issues](https://github.com/nicokieferle/knowledge-system/issues).
 Die unten erhaltenen älteren englischen Anleitungen sind im jeweiligen historischen
 Kontext zu lesen; die folgenden Klarstellungen beschreiben den aktuellen Repo-Abgleich.
 
@@ -42,7 +42,7 @@ Auftrag; dieser Dokumentationsrefactor verändert weder Konfiguration noch Daten
 | `.env.server` | `docker compose --env-file .env.server` → explizite `environment`-Felder | Hostwerte werden interpoliert; die Env-Datei wird nicht als Datei in den Container gemountet. |
 | `COMPOSE_ENV_FILE` | Backup-/Restore-Helfer in `scripts/durable_tables.sh` | Unterstützter Override der Env-Datei; Default `.env.server`. `BACKUP_DIR` hat einen gesonderten bestehenden Default. |
 
-Produktcode/-dokumentation bleiben in `Hengsto/Knowledge-System`. Ein **separates privates
+Produktcode/-dokumentation bleiben in `nicokieferle/knowledge-system`. Ein **separates privates
 Daten-Repository** für Laufzeitwissen ist vorgesehen. Der Verzeichnisname
 `knowledge-repository` ist kein beschlossener GitHub-Repository-Name. Name, Migration,
 Git-Versionierungsablauf und Backupbetrieb bleiben offen. Es wurde kein Repository
@@ -234,7 +234,7 @@ git --version
 Clone the repository and create a server-only environment file:
 
 ```bash
-git clone https://github.com/Hengsto/Knowledge-System.git
+git clone https://github.com/nicokieferle/knowledge-system.git
 cd Knowledge-System
 cp .env.server.example .env.server
 chmod 600 .env.server
