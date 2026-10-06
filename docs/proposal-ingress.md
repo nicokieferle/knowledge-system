@@ -174,6 +174,31 @@ Eingabewerte, SQL, Tokens oder Tracebacks. Keine Body-/Provenienz-/Diff-Logs.
 
 ## Prüfgrenzen
 
+`test_local_machine_search_original_then_pending_submission` in der
+[PostgreSQL-Integration](../tests/integration/test_proposal_ingress_postgres.py)
+verbindet den unabhängigen lokalen Maschinenablauf: authentifizierte
+[MCP-HTTP-Suche](mcp-http-access.md) nach verwandtem kanonischem Wissen, Abruf des
+Originaldokuments anhand des Treffers und anschließend authentifizierte Einreichung
+eines fertigen Entwurfs über den separaten Eingang. Beide Maschinen-Schnittstellen
+verwenden echtes Loopback-HTTP mit Uvicorn; MCP läuft im Testthread, der Eingang als
+eigener `knowledge-proposal-ingress`-Prozess. Keyword-Suche, Quellenadapter,
+Eingangsservice und Stores verwenden echtes isoliertes PostgreSQL und einen
+temporären Wissensroot. Daten und Credentials sind synthetisch. Die Embeddings
+beim vorbereitenden Indexaufbau sind ersetzt; der separat angemeldete Browser
+verwendet TestClient für die Queue.
+Der Test prüft genau zwei lesende MCP-Tools, gegenseitige Abweisung der Tokens,
+das unveränderte pending-Proposal in der Owner-Queue und unveränderte Wissensbytes
+und Dateiliste nach Suche/Abruf sowie nach Einreichung/Queue-GET. Review-,
+Entscheidungs- und Apply-Daten bleiben leer.
+
+Diese Reihenfolge belegt die Handlungen dieses Testclients. Der Eingang bestätigt
+keine vom Client in `reason` behauptete Suche und bindet die Einreichung nicht an
+eine MCP-Sitzung oder deren Treffer. Die Suchangabe bleibt ungeprüfter Clientkontext;
+menschliches Review bewertet weiterhin Vorbezüge und Aussage. Kein Modellaufruf,
+installierter externer Client, Remote-Transport, TLS oder produktiver Betrieb wird
+damit belegt. Browser-Accept & Apply wird durch den bestehenden Test unten separat
+nachgewiesen.
+
 [HTTP-Tests](../tests/test_proposal_ingress.py) verwenden einen Ersatzservice zur
 Validierung der Transportgrenze. [Integration](../tests/integration/test_proposal_ingress_postgres.py)
 verwendet echte Stores/Services, PostgreSQL und Browser-TestClient; sie prüft

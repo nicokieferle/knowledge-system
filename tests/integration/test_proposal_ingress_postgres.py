@@ -1,22 +1,31 @@
 """Real atomic submission, concurrency and owner/browser gate on isolated PostgreSQL."""
 
+import asyncio
 import json
+import os
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from hashlib import sha256
 from html import unescape
+from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
 
+import httpx2
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
 
 from knowledge_system.client_state import ClientIdentity, PostgresClientStateStore
 from knowledge_system.conversation_models import MessageRole, ProposalDraft, ProposalTriggerType
 from knowledge_system.conversation_store import PostgresConversationStore
 from knowledge_system.db import init_db
+from knowledge_system.indexer import DocumentIndexCoordination
+from knowledge_system.mcp_server import create_mcp_server
 from knowledge_system.proposal_apply import PostgresApplyStore, ProposalApplyService
 from knowledge_system.proposal_ingress import ProposalIngressService, parse_submission
 from knowledge_system.proposal_ingress_web import create_app
@@ -24,9 +33,12 @@ from knowledge_system.proposal_review import ProposalReviewService, ProposalStat
 from knowledge_system.proposal_store import PostgresProposalStore, ProposalCreate
 from knowledge_system.review_store import PostgresReviewStore
 from knowledge_system.review_web import create_app as review_app
+from knowledge_system.service import KnowledgeService
 from knowledge_system.sources import GitMarkdownSource
+from scripts.proposal_ingress_image_smoke import free_port, start, stop
 from tests.integration import test_proposal_review_postgres as pg_review
 from tests.integration.test_review_web_postgres import real_document_indexer
+from tests.test_mcp_server import _running_http_server
 from tests.test_proposal_ingress import OWNER, TOKEN, headers, payload, settings
 from tests.test_review_web import csrf, login, web_settings
 
@@ -56,6 +68,118 @@ def counts(database):
                 "chunks",
             )
         )
+
+
+def test_local_machine_search_original_then_pending_submission(database, monkeypatch):
+    # The client performs the search; ingress does not verify its reported reason.
+    monkeypatch.chdir(database.knowledge_root)  # No developer .env in the subprocess.
+    init_db(database)
+    source = GitMarkdownSource(database.knowledge_root)
+    original = "# Synthetische Hypothese\n\nEine synthetische These zum Vergleich.\n"
+    original_path = database.knowledge_root / "related.md"
+    original_path.write_bytes(original.encode("utf-8"))
+    real_document_indexer(database)(
+        source.get_document("related.md"), coordination=DocumentIndexCoordination.ACQUIRE_LOCKS
+    )
+
+    def files():
+        return {
+            str(path.relative_to(database.knowledge_root)): path.read_bytes()
+            for path in database.knowledge_root.rglob("*")
+            if path.is_file()
+        }
+
+    before_files, before_counts = files(), counts(database)
+    assert before_counts == (0, 0, 0, 0, 0, 0, 0, 0, 1)
+    read_token = "synthetic-machine-read-credential-1234567890"
+    port = free_port()
+    env = {
+        "PATH": os.environ["PATH"],
+        "DATABASE_URL": database.database_url,
+        "KNOWLEDGE_ROOT": str(database.knowledge_root),
+        "PROPOSAL_INGRESS_CLIENT_ID": settings().client_id,
+        "PROPOSAL_INGRESS_BEARER_TOKEN": TOKEN,
+        "MCP_HTTP_BEARER_TOKEN": read_token,
+        "PROPOSAL_INGRESS_PORT": str(port),
+        "PROPOSAL_INGRESS_ALLOWED_HOSTS": f"127.0.0.1:{port}",
+    }
+    for prefix in ("PROPOSAL_INGRESS_OWNER_", "REVIEW_OWNER_"):
+        env.update(
+            {prefix + "CLIENT_TYPE": "test", prefix + "CHAT_ID": "chat", prefix + "USER_ID": "user"}
+        )
+    server = create_mcp_server(
+        KnowledgeService(database, verbose=False), allowed_source_ids=frozenset({"knowledge-git"})
+    )
+    ingress = start(str(Path(sys.executable).with_name("knowledge-proposal-ingress")), env, port)
+
+    async def scenario(url):
+        async with httpx2.AsyncClient() as http:
+            denied = await http.post(
+                url + "/mcp",
+                headers={"Authorization": "Bearer " + TOKEN},
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+            )
+            assert denied.status_code == 401
+            assert denied.headers["WWW-Authenticate"] == "Bearer"
+        async with (
+            httpx2.AsyncClient(headers={"Authorization": "Bearer " + read_token}) as http,
+            Client(streamable_http_client(url + "/mcp", http_client=http), mode="legacy") as client,
+        ):
+            listed = await client.list_tools()
+            assert [tool.name for tool in listed.tools] == ["search_knowledge", "get_document"]
+            search = await client.call_tool(
+                "search_knowledge", {"query": "synthetische These", "mode": "fast", "limit": 1}
+            )
+            assert search.is_error is False
+            (hit,) = search.structured_content["results"]
+            reference = {"source_id": hit["source_id"], "source_path": hit["source_path"]}
+            assert reference == {"source_id": "knowledge-git", "source_path": "related.md"}
+            document = await client.call_tool("get_document", reference)
+            assert document.is_error is False
+            assert document.structured_content == reference | {"content": original}
+        assert files() == before_files and counts(database) == before_counts
+        body = payload() | {
+            "reason": f"Clientsuche: Vorbezug {hit['source_id']}:{hit['source_path']}; "
+            "Original gelesen. Ergänzende Hypothese zur menschlichen Prüfung.",
+            "proposed_content": "# Hypothese\r\n\r\nErgänzende synthetische Aussage α.\r\n",
+        }
+        async with httpx2.AsyncClient(base_url=f"http://127.0.0.1:{port}") as http:
+            denied = await http.post(
+                "/v1/proposals",
+                json=body,
+                headers=headers() | {"Authorization": "Bearer " + read_token},
+            )
+            assert denied.status_code == 401
+            assert denied.headers["WWW-Authenticate"] == "Bearer"
+            assert counts(database) == before_counts and files() == before_files
+            submitted = await http.post("/v1/proposals", json=body, headers=headers())
+            assert submitted.status_code == 201
+            assert counts(database) == (1, 1, 1, 3, 1, 0, 0, 0, before_counts[-1])
+            assert files() == before_files
+            return body, submitted.json()
+
+    try:
+        with _running_http_server(server, token=read_token) as url:
+            body, receipt = asyncio.run(scenario(url))
+    finally:
+        stop(ingress)
+    pid = UUID(receipt["proposal_id"])
+    assert receipt["submission_state"] == "recorded"
+    reviews = ProposalReviewService(PostgresReviewStore(database), source)
+    view = reviews.get(OWNER, pid)
+    assert str(view.proposal.conversation_id) == receipt["conversation_id"]
+    assert view.proposal.status == "pending" and view.revision is None
+    assert view.proposal.source_client == settings().client_id
+    assert view.proposal.reason == body["reason"]
+    assert view.proposal.proposed_content == body["proposed_content"]
+    page = reviews.queue(OWNER, ("pending",))
+    assert page.total == 1 and [item.id for item in page.items] == [pid]
+    with TestClient(review_app(replace(web_settings(), owner=OWNER), reviews)) as browser:
+        login(browser)
+        queue = browser.get("/reviews")
+        assert queue.status_code == 200 and str(pid) in queue.text
+    assert counts(database) == (1, 1, 1, 3, 1, 0, 0, 0, before_counts[-1])
+    assert files() == before_files
 
 
 def test_http_submission_browser_provenance_owner_and_explicit_prepare(database):

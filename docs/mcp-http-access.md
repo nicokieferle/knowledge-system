@@ -78,3 +78,9 @@ entfernten Client wären ein gesondert geprüfter privater Transport mit TLS,
 Secret-Verteilung und Netzwerkfreigabe nötig; das gehört nicht zu dieser Änderung.
 Die Browser-Review-App hat eine getrennte Authentifizierung und erhält keine
 MCP-Maschinenberechtigung.
+
+Der gemeinsame lokale [Prüfnachweis](proposal-ingress.md#prüfgrenzen) verbindet
+authentifizierte Suche und Originalabruf mit der anschließenden Einreichung eines
+fertigen Entwurfs über den separaten Proposal-Eingang. Er prüft die getrennten
+Tokens und den unveränderten Wissensbestand. Die dort berichtete Suche bleibt
+eine ungeprüfte Clientangabe; der Eingang verifiziert keinen MCP-Retrievalnachweis.
