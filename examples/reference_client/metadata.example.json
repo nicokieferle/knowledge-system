@@ -1,0 +1,12 @@
+{
+  "summary": "Synthetische Hypothese zur Prüfung",
+  "reason": "Suche durchgeführt und Original geprüft. Ergänzende Hypothese zur Prüfung.",
+  "title": "Beispiel",
+  "target_source_path": "notes/example.md",
+  "provenance": {
+    "source_ref": "local-draft/example",
+    "origin_kind": "human_statement",
+    "statement_type": "hypothesis",
+    "original_text": "Synthetische ursprüngliche Aussage."
+  }
+}

@@ -92,6 +92,11 @@ Einreichung, Akzeptanz, Datei-Apply und Indexierung bleiben unterscheidbar.
 Sein Token ist vom lesenden MCP und Browser-Login getrennt; Review und Apply
 bleiben ausdrückliche Browseroperationen.
 
+Das unabhängige [lokale Referenzbeispiel](examples/reference_client/README.md)
+zeigt Suche, Originalabruf, ausdrückliche Einreichung einer fertigen Markdown-Datei
+und eigenen Status über diese Verträge. Es liegt außerhalb des Produktkerns und
+benötigt keine Installation des Knowledge-System-Pakets.
+
 - [Lokale Einrichtung, Start, MCP und Retrieval-Evaluation](docs/local-development.md)
   mit Python ab 3.11, pip und PostgreSQL/pgvector.
 - [Prüfauswahl, lokale Befehle und vorhandene CI](docs/CI.md#prüfauswahl-und-nachweise).
