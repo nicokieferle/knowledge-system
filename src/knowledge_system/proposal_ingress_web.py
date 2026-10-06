@@ -1,4 +1,4 @@
-"""Private, bearer-only HTTP submission; no review, filesystem or index service."""
+"""Private bearer-only submission/status; no review, filesystem or index service."""
 
 from __future__ import annotations
 
@@ -74,6 +74,22 @@ def create_app(settings: IngressSettings, service: ProposalIngressService):
     @app.exception_handler(IngressError)
     async def ingress_error(request, exc):
         return error_response(exc.status, exc.code, request.scope["ingress_correlation"])
+
+    @app.get("/v1/proposals/{proposal_id}/status")
+    async def status(proposal_id: str):
+        try:
+            pid = UUID(proposal_id)
+            if str(pid) != proposal_id:
+                raise ValueError()
+        except ValueError:
+            raise IngressError(404, "not_found") from None
+        try:
+            result = await run_in_threadpool(
+                service.status, settings.client_id, settings.owner, pid
+            )
+        except psycopg.Error:
+            raise IngressError(503, "status_unavailable") from None
+        return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
     @app.post("/v1/proposals")
     async def submit(request: Request):

@@ -6,12 +6,15 @@ Eine Maschinenidentität ist einem festen Browser-Review-Owner zugeordnet. Das i
 eine Delegation zur Einreichung in dessen Queue, keine menschliche Entscheidung.
 Vertrag und Abnahme: [Issue #35](https://github.com/Hengsto/Knowledge-System/issues/35).
 Die v1-Entscheidungen wurden für die Implementierung vom Maintainer bestätigt.
+Die in [Issue #41](https://github.com/Hengsto/Knowledge-System/issues/41) bestätigte
+Ergänzung erlaubt dem gleichen Token Status-Polling eigener Einreichungen. Der erste
+Client läuft lokal und erzeugt fertige Entwürfe selbst; er wird hier nicht implementiert.
 
 Dieser Vertrag konkretisiert KS-CORE-003, KS-DATA-002/003/005,
 KS-SEC-001/002/003 und KS-CLIENT-001/002/003 aus den
 [Requirements](../REQUIREMENTS.md) und die Phase clientunabhängiger Integration der
 [Roadmap](../ROADMAP.md#weitere-phasen-und-abhängigkeiten). Ein Deployment ist damit
-nicht belegt. Haley, Journaling, Dialog-/Status-APIs und serverseitige Generierung
+nicht belegt. Haley, Journaling, allgemeine Dialog-APIs und serverseitige Generierung
 bleiben außerhalb dieser Operation.
 
 ## Konfiguration und lokale Vertrauensgrenze
@@ -36,7 +39,8 @@ sicherstellen. Private Ownerwerte und Credential-Verteilung sind Betreiberkonfig
 Start nach Konfiguration: `knowledge-proposal-ingress`. Genau ein privater
 Uvicorn-Prozess; HTTP-Access-Logging und Proxy-Header-Vertrauen sind deaktiviert.
 Kein Schema-Init, Reindex oder Modellaufruf beim Start. Der Prozess konstruiert nur
-den Eingangsservice, keinen Review-/Apply-Service oder Dateischreiber. Für den Betrieb
+den Eingangsservice mit lesendem Statuszugriff, keinen Review-/Apply-Service oder
+Dateischreiber. Für den Betrieb
 keinen beschreibbaren Wissensmount bereitstellen; PostgreSQL enthält dauerhafte Daten.
 
 Loopback und Host-Allowlist richten keinen sicheren entfernten Zugang ein.
@@ -147,6 +151,56 @@ Einreichungen. Andere Maschinenidentität hat einen eigenen Schlüsselraum.
 DB-Fehler vor Commit rollen sämtliche Komponenten zurück. Es gibt keine neue Tabelle
 oder Migration; bestehende Archiv-/Restore-Verfahren erfassen die Metadaten und Beziehungen.
 
+## Status eigener Einreichungen
+
+`GET /v1/proposals/{proposal_id}/status` benötigt denselben privaten Bearer-Token
+und dieselbe Hostgrenze wie der POST. Die ID ist eine kanonische UUID (kleine
+Hexzeichen mit Bindestrichen) aus dem Receipt, kein Berechtigungsnachweis.
+Keine Query, alternative Credentials, Cookie-Anmeldung oder Clientangaben zu Owner/
+Maschinenidentität. Ein `Idempotency-Key` ist für GET nicht erforderlich.
+
+Autorisierung prüft den archivierten `proposal-ingress`-Container und den **genau
+diesem Proposal zugeordneten** Kontrolltrigger: gespeicherte Maschinenkennung,
+vollständige Owner-Delegation und Receipt mit Proposal-/Conversation-ID müssen
+übereinstimmen; außerdem muss diese Ownership weiterhin bestehen. Gemeinsamer
+Browser-Owner, bekannte ID oder `source_client` allein genügen nicht. Ein Browser-
+Konfliktnachfolger ist auch im selben Container keine Maschinen-Einreichung.
+
+Autorisierung, Proposalstatus, akzeptierte Revisionsbindung und Journalzustände
+werden mit `REPEATABLE READ READ ONLY` aus einem konsistenten PostgreSQL-Snapshot
+gelesen. GET erzeugt oder aktualisiert keine Daten, bereitet kein Review vor und
+liest keine Wissensdatei. Kein Review-/Apply-Service oder Dateischreiber wird
+benötigt; keine zusätzliche Tabelle oder Schemamigration.
+
+HTTP 200 mit `Cache-Control: no-store` enthält ausschließlich diese fünf Felder:
+
+```json
+{"proposal_id":"<UUID>","proposal_status":"pending","accepted_review_id":null,"apply_status":null,"index_status":null}
+```
+
+- `proposal_status`: `pending`, `deferred`, `rejected` oder `accepted`.
+- `accepted_review_id`: UUID der akzeptierten unveränderlichen Review-Revision,
+  sonst `null`. Deren Inhalt kann durch menschliche Korrekturen vom Entwurf abweichen.
+- `apply_status`: `pending`, `applied`, `conflict` oder `failed`.
+- `index_status`: `pending`, `indexed` oder `failed`.
+- Ohne Apply-Datensatz sind **beide** Journalzustände ausdrücklich `null`, auch bei
+  akzeptiertem Proposal. Eine vorbereitete Revision ist keine Akzeptanz.
+
+`applied` mit `index_status=failed` meldet erfolgreiche Dateiübernahme bei
+gescheiterter Indexierung. Der Status beschreibt gespeicherte Verarbeitung dieser
+Revision, keine aktuelle Dateiintegritätsprüfung, Retrievalqualität, Git-Versionierung
+oder Deploymentbestätigung. Inhalte, Diff, Herkunft, Ownerwerte, Zielpfade,
+Fehlerdetails und Nachfolger-IDs werden nicht zurückgegeben. Keine Listen, Webhooks
+oder Maschinen-Mutationen.
+
+Tokenrotation bei gleicher Maschinenidentität und exakt gleicher Owner-Bindung
+erhält den Zugriff; der alte Token wird abgewiesen. Eine neue Owner-Zuordnung erhält
+auch bei zusätzlich erteilter aktueller Ownership keinen Zugriff auf alte Einreichungen.
+Fehlende, fremde und nichtkanonische IDs liefern dieselbe sichere Antwort
+`404 not_found`; DB-Fehler liefern `503 status_unavailable`. Fehlende/falsche/
+mehrdeutige Credentials liefern vor ID-Auswertung `401 unauthorized`.
+Das historische POST-/Replay-Receipt bleibt auch nach terminalem Review unverändert.
+
 ## Browser und Fehler
 
 Die ownershipgefilterte paginierte Queue erreicht auch archivierte Auditcontainer.
@@ -166,13 +220,25 @@ mit CSRF erzeugt eine Revision; Entscheidung und Accept & Apply bleiben
 | 415 | `unsupported_media_type` |
 | 422 | `invalid_submission` |
 | 409 | `idempotency_conflict`, `binding_conflict` |
-| 503 | `submission_unavailable`; DB-Wiederholung mit demselben Schlüssel |
+| 503 | `submission_unavailable`; POST-Wiederholung mit demselben Schlüssel. `status_unavailable` bei DB-Fehler der Statusabfrage. |
 | 404 / 405 | `not_found` / `method_not_allowed`, keine zusätzlichen Operationen |
 
 Fehlerkörper enthalten nur `error` und eine serverseitige `correlation_id`, keine
 Eingabewerte, SQL, Tokens oder Tracebacks. Keine Body-/Provenienz-/Diff-Logs.
 
 ## Prüfgrenzen
+
+[Status-Integration](../tests/integration/test_proposal_status_postgres.py) prüft
+eigene/fremde Einreichungen, exakte Owner-Bindung trotz zusätzlicher Ownership,
+Konfliktnachfolger, Rotation und Neustart mit echten PostgreSQL-Stores. Vollständige
+Tabelleninhalte und temporäre Wissensbytes werden vor/nach GET verglichen.
+Reviewzustände und getrennte Datei-/Indexphasen sind echt; für deterministische
+Fehler werden einmal Writer und einmal Indexcallback ersetzt. Erfolgreicher
+Dateischreiber und dokumentbezogener Indexer sind echt, Embeddings synthetisch.
+Ein Snapshot-Test committet nach Aufbau des Lesesnapshots eine Review-Entscheidung
+über eine zweite echte Verbindung und prüft die unveränderte Sicht sowie die
+DB-erzwungene Schreibsperre. HTTP verwendet TestClient; keine Remote-/TLS-/Modell-
+oder produktive Clientgrenze wird damit belegt.
 
 `test_local_machine_search_original_then_pending_submission` in der
 [PostgreSQL-Integration](../tests/integration/test_proposal_ingress_postgres.py)
@@ -217,8 +283,9 @@ prüft zusätzlich exakte Inhalte, Metadaten und Replay nach Wiederherstellung.
 [Image-Smoke](../scripts/proposal_ingress_image_smoke.py) startet im gebauten Image
 als dessen Benutzer die echten `knowledge-proposal-ingress`- und `knowledge-review`-
 Prozesse mit Uvicorn, synthetischen Credentials und eigener PostgreSQL-Schema-Namespace.
-Gültiger POST, Replay, Konflikt, fehlender/falscher Token, getrennte Browseranmeldung
-und sichtbare Herkunft werden über echtes Loopback-HTTP geprüft. Kein Apply, kein
+Gültiger POST, Replay, Konflikt, fehlender/falscher Token, getrennte Browseranmeldung,
+sichtbare Herkunft, Status vor/nach Browser-Reject und Tokenrotation mit Prozessneustart
+werden über echtes Loopback-HTTP geprüft. Kein Apply, kein
 Modell, Telegram, Remote-Client, TLS-Terminator oder produktiver Server. Build und
 Smoke laufen über [CI-Reproduktion](CI.md#lokale-reproduktion); aktuelle Ergebnisse
 und Artefaktidentität gehören in den Implementierungs-PR.

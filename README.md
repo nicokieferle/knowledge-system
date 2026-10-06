@@ -86,7 +86,10 @@ Maschinenberechtigung und erlaubt zunächst nur kanonisches Markdown.
 
 Der separate [Proposal-Eingang](docs/proposal-ingress.md) nimmt fertige Entwürfe
 über authentifizierten `POST /v1/proposals` atomar und idempotent in die Owner-Queue
-auf. Sein Token ist vom lesenden MCP und Browser-Login getrennt; Review und Apply
+auf. `GET /v1/proposals/{proposal_id}/status` liefert mit demselben Token ausschließlich
+minimale Zustände der eigenen Einreichung bei exakt gespeicherter Owner-Delegation;
+Einreichung, Akzeptanz, Datei-Apply und Indexierung bleiben unterscheidbar.
+Sein Token ist vom lesenden MCP und Browser-Login getrennt; Review und Apply
 bleiben ausdrückliche Browseroperationen.
 
 - [Lokale Einrichtung, Start, MCP und Retrieval-Evaluation](docs/local-development.md)

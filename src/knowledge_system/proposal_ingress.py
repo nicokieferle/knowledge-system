@@ -130,6 +130,52 @@ class ProposalIngressService:
         self.settings, self._connect = settings, connection_factory
         self.proposals = PostgresProposalStore(settings, connection_factory)
 
+    def status(self, client_id: str, owner: ClientIdentity, proposal_id: UUID) -> dict:
+        """Read only an original submission bound to this machine and exact owner."""
+        with self._connect(self.settings) as conn, conn.transaction():
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            # Pin the original control trigger and receipt, not just source_client
+            # or shared browser ownership. Refresh successors have a different trigger.
+            row = conn.execute(
+                """SELECT p.id, p.status, p.accepted_review_id,
+                          a.apply_status, a.index_status
+                FROM proposals p
+                JOIN conversations c ON c.id=p.conversation_id
+                JOIN messages m ON m.id=p.trigger_message_id AND m.conversation_id=c.id
+                LEFT JOIN proposal_applies a
+                  ON a.proposal_id=p.id AND a.review_id=p.accepted_review_id
+                WHERE p.id=%s AND c.client_type='proposal-ingress'
+                  AND c.archived_at IS NOT NULL
+                  AND starts_with(c.external_conversation_id, %s)
+                  AND m.metadata->>'control'='external_submission'
+                  AND m.metadata->>'client_id'=%s
+                  AND m.metadata->'owner'=%s
+                  AND m.metadata->'receipt'->>'proposal_id'=p.id::text
+                  AND m.metadata->'receipt'->>'conversation_id'=c.id::text
+                  AND m.metadata->'receipt'->>'submission_state'='recorded'
+                  AND EXISTS (SELECT 1 FROM client_conversations cc
+                    WHERE cc.conversation_id=c.id AND cc.client_type=%s
+                      AND cc.external_chat_id=%s AND cc.external_user_id=%s)""",
+                (
+                    proposal_id,
+                    f"v1:{client_id}:",
+                    client_id,
+                    Jsonb(asdict(owner)),
+                    owner.client_type,
+                    owner.external_chat_id,
+                    owner.external_user_id,
+                ),
+            ).fetchone()
+            if row is None:
+                raise IngressError(404, "not_found")
+            return {
+                "proposal_id": str(row[0]),
+                "proposal_status": row[1],
+                "accepted_review_id": str(row[2]) if row[2] is not None else None,
+                "apply_status": row[3],
+                "index_status": row[4],
+            }
+
     def submit(
         self, client_id: str, owner: ClientIdentity, key: UUID, submission: Submission
     ) -> SubmissionResult:
