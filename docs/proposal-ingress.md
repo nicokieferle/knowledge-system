@@ -8,7 +8,10 @@ Vertrag und Abnahme: [Issue #35](https://github.com/Hengsto/Knowledge-System/iss
 Die v1-Entscheidungen wurden für die Implementierung vom Maintainer bestätigt.
 Die in [Issue #41](https://github.com/Hengsto/Knowledge-System/issues/41) bestätigte
 Ergänzung erlaubt dem gleichen Token Status-Polling eigener Einreichungen. Der erste
-Client läuft lokal und erzeugt fertige Entwürfe selbst; er wird hier nicht implementiert.
+Client läuft lokal und erzeugt fertige Entwürfe selbst; der damalige Statusauftrag
+implementierte ihn nicht. Das separate [Referenzbeispiel](../examples/reference_client/README.md)
+nutzt nun diese Verträge mit einer benutzerbereitgestellten fertigen Markdown-Datei,
+ohne Generierung, Browser-Review oder Apply auszulösen.
 
 Dieser Vertrag konkretisiert KS-CORE-003, KS-DATA-002/003/005,
 KS-SEC-001/002/003 und KS-CLIENT-001/002/003 aus den
