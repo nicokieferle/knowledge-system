@@ -4,6 +4,7 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from hashlib import sha256
 from html import unescape
 from threading import Barrier
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from knowledge_system.client_state import ClientIdentity, PostgresClientStateSto
 from knowledge_system.conversation_models import MessageRole, ProposalDraft, ProposalTriggerType
 from knowledge_system.conversation_store import PostgresConversationStore
 from knowledge_system.db import init_db
+from knowledge_system.proposal_apply import PostgresApplyStore, ProposalApplyService
 from knowledge_system.proposal_ingress import ProposalIngressService, parse_submission
 from knowledge_system.proposal_ingress_web import create_app
 from knowledge_system.proposal_review import ProposalReviewService, ProposalStatus, ReviewForbidden
@@ -24,8 +26,9 @@ from knowledge_system.review_store import PostgresReviewStore
 from knowledge_system.review_web import create_app as review_app
 from knowledge_system.sources import GitMarkdownSource
 from tests.integration import test_proposal_review_postgres as pg_review
+from tests.integration.test_review_web_postgres import real_document_indexer
 from tests.test_proposal_ingress import OWNER, TOKEN, headers, payload, settings
-from tests.test_review_web import login, web_settings
+from tests.test_review_web import csrf, login, web_settings
 
 
 @pytest.fixture
@@ -371,3 +374,105 @@ def test_queue_preview_selects_original_for_ingress_and_latest_for_telegram(data
         assert "&lt;script&gt;" in article and "<script>synthetic</script>" not in article
         assert unexpected not in article and "Outside originating IDs" not in article
     assert counts(database)[5:] == (0, 0, 0, 0)
+
+
+def test_external_submission_browser_accept_apply_exact_bytes_and_journal(database):
+    """Real apps/stores/writer/indexer; TestClient transport and synthetic embeddings."""
+    init_db(database)
+    body = payload()
+    body["target_source_path"] = "example.md"
+    expected_bytes = body["proposed_content"].encode("utf-8")
+    expected_hash = sha256(expected_bytes).hexdigest()
+    assert not list(database.knowledge_root.iterdir())
+    with TestClient(create_app(settings(), ProposalIngressService(database))) as client:
+        response = client.post("/v1/proposals", json=body, headers=headers())
+        assert response.status_code == 201
+        receipt = response.json()
+    pid = UUID(receipt["proposal_id"])
+    assert counts(database) == (1, 1, 1, 3, 1, 0, 0, 0, 0)
+    assert not list(database.knowledge_root.iterdir())
+
+    reviews = ProposalReviewService(
+        PostgresReviewStore(database), GitMarkdownSource(database.knowledge_root)
+    )
+    apply_service = ProposalApplyService(database, document_indexer=real_document_indexer(database))
+    app = review_app(replace(web_settings(), owner=OWNER), reviews, apply_service)
+    path = f"/reviews/{pid}"
+    with TestClient(app) as client:
+        token = login(client)
+        queue = client.get("/reviews")
+        assert queue.status_code == 200 and str(pid) in queue.text
+        page = client.get(path)
+        assert page.status_code == 200 and "Ursprünglich" in page.text
+        pending = reviews.get(OWNER, pid)
+        assert pending.proposal.status == "pending" and pending.revision is None
+        assert pending.proposal.conversation_id == UUID(receipt["conversation_id"])
+        assert counts(database) == (1, 1, 1, 3, 1, 0, 0, 0, 0)
+        assert not list(database.knowledge_root.iterdir())
+
+        # An ordinary browser form serializes the textarea with normalized newlines.
+        # Without explicit editing, preparation must retain the durable ingress bytes.
+        prepared = client.post(
+            path + "/refresh",
+            data={
+                "csrf": token,
+                "target": body["target_source_path"],
+                "content": body["proposed_content"].replace("\r\n", "\n"),
+            },
+            follow_redirects=False,
+        )
+        assert prepared.status_code == 303 and prepared.headers["location"] == path
+        page = client.get(path)
+        assert page.status_code == 200 and "Accept &amp; Apply" in page.text
+        rid = UUID(re.search(r'name="review_id" value="([^"]+)"', page.text)[1])
+        revision = reviews.get(OWNER, pid).revision
+        assert rid == revision.id and revision.proposal_id == pid
+        assert revision.content.new_content.encode("utf-8") == expected_bytes
+        assert revision.content.new_hash == expected_hash
+        assert counts(database) == (1, 1, 1, 3, 1, 1, 0, 0, 0)
+        assert not list(database.knowledge_root.iterdir())
+
+        data = {"csrf": csrf(page), "review_id": str(rid), "status": "pending"}
+        confirmation = client.post(path + "/decision/accept-apply", data=data)
+        assert confirmation.status_code == 200
+        assert f'name="review_id" value="{rid}"' in confirmation.text
+        assert counts(database) == (1, 1, 1, 3, 1, 1, 0, 0, 0)
+        assert not list(database.knowledge_root.iterdir())
+        accepted = client.post(
+            path + "/decision/accept-apply",
+            data=data | {"csrf": csrf(confirmation), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+        assert accepted.status_code == 303 and accepted.headers["location"] == path
+        page = client.get(path)
+        assert "<dd>applied</dd>" in page.text and "<dd>indexed</dd>" in page.text
+
+    # Re-read durable state independently of the HTTP apps/service instances.
+    result = PostgresApplyStore(database).get(OWNER, pid)
+    assert result.review.proposal.status == "accepted"
+    assert result.review.accepted_review_id == rid
+    assert result.review.revision == revision
+    journal = result.apply
+    assert (journal.proposal_id, journal.review_id) == (pid, rid)
+    assert (journal.target_source_id, journal.target_source_path) == ("knowledge-git", "example.md")
+    assert journal.expected_absent and journal.expected_old_hash is None
+    assert journal.expected_new_hash == journal.actual_hash == expected_hash
+    assert (journal.apply_status, journal.index_status) == ("applied", "indexed")
+    assert (journal.apply_attempts, journal.index_attempts) == (1, 1)
+    assert journal.applied_at is not None and journal.indexed_at is not None
+    assert (database.knowledge_root / "example.md").read_bytes() == expected_bytes
+    assert sorted(p.name for p in database.knowledge_root.iterdir()) == ["example.md"]
+    with psycopg.connect(database.database_url) as conn:
+        assert conn.execute(
+            """SELECT proposal_id, review_id, previous_status, status,
+            client_type, external_chat_id, external_user_id FROM proposal_decisions"""
+        ).fetchall() == [(pid, rid, "pending", "accepted", "test", "chat", "user")]
+        assert conn.execute(
+            """SELECT actor_client_type, actor_external_chat_id, actor_external_user_id
+            FROM proposal_applies"""
+        ).fetchall() == [("test", "chat", "user")]
+        chunks = conn.execute("SELECT source_id, source_path, content FROM chunks").fetchall()
+        assert chunks and all(
+            row[:2] == ("knowledge-git", "example.md") and "Änderung α." in row[2] for row in chunks
+        )
+    assert counts(database)[4:8] == (1, 1, 1, 1)

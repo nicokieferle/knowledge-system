@@ -178,6 +178,14 @@ Eingabewerte, SQL, Tokens oder Tracebacks. Keine Body-/Provenienz-/Diff-Logs.
 Validierung der Transportgrenze. [Integration](../tests/integration/test_proposal_ingress_postgres.py)
 verwendet echte Stores/Services, PostgreSQL und Browser-TestClient; sie prüft
 Ownership, Parallelität, Konflikte, Rollback, unveränderte aktive Themen und Pagination.
+`test_external_submission_browser_accept_apply_exact_bytes_and_journal` verbindet
+zusätzlich authentifizierten Eingang, Owner-Queue, ausdrückliche Browser-Vorbereitung,
+Bestätigung und revisionsgebundenes Accept & Apply. Der temporäre Wissensroot bleibt
+bis zur bestätigten Entscheidung leer; anschließend werden exakte UTF-8-Bytes mit
+Unicode/CRLF sowie Entscheidung, Actor, Revisionsbindung, Hashes und Apply-Journal
+geprüft. Dateischreiber und dokumentbezogener PostgreSQL-Indexer sind echt; nur
+HTTP-Transport (TestClient) und Embeddings (synthetischer Ersatz) sind ersetzt.
+Das belegt keinen Modell-, Remote-Client-, TLS- oder produktiven Betriebsablauf.
 Der [Archiv-/Restore-Test](../tests/integration/test_proposal_review_postgres.py)
 prüft zusätzlich exakte Inhalte, Metadaten und Replay nach Wiederherstellung.
 
